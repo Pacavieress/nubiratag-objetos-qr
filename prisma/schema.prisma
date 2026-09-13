@@ -1,0 +1,131 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum RolUsuario {
+  admin
+  funcionario
+}
+
+enum EstadoQr {
+  activo
+  revocado
+}
+
+enum EstadoHallazgo {
+  reportado
+  retirado
+  descartado
+}
+
+enum CanalNotificacion {
+  email
+  whatsapp
+  web
+}
+
+enum EstadoNotificacion {
+  pendiente
+  enviada
+  fallida
+}
+
+model Usuario {
+  id           Int        @id @default(autoincrement())
+  email        String     @unique
+  passwordHash String     @map("password_hash")
+  nombre       String
+  rol          RolUsuario
+  activo       Boolean    @default(true)
+  createdAt    DateTime   @default(now()) @map("created_at")
+
+  hallazgosReportados Hallazgo[] @relation("HallazgoReportadoPor")
+
+  @@map("usuario")
+}
+
+model Estudiante {
+  id                Int      @id @default(autoincrement())
+  nombre            String
+  curso             String
+  apoderadoNombre   String   @map("apoderado_nombre")
+  apoderadoEmail    String   @map("apoderado_email")
+  apoderadoTelefono String?  @map("apoderado_telefono")
+  activo            Boolean  @default(true)
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  qrCodigos QrCodigo[]
+
+  @@map("estudiante")
+}
+
+model QrCodigo {
+  id           Int      @id @default(autoincrement())
+  estudianteId Int      @map("estudiante_id")
+  token        String   @unique
+  etiqueta     String?
+  estado       EstadoQr @default(activo)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  estudiante Estudiante @relation(fields: [estudianteId], references: [id])
+  hallazgos  Hallazgo[]
+
+  @@index([estudianteId])
+  @@map("qr_codigo")
+}
+
+model Ubicacion {
+  id     Int     @id @default(autoincrement())
+  nombre String
+  activo Boolean @default(true)
+
+  hallazgos Hallazgo[]
+
+  @@map("ubicacion")
+}
+
+model Hallazgo {
+  id           Int            @id @default(autoincrement())
+  qrCodigoId   Int            @map("qr_codigo_id")
+  ubicacionId  Int            @map("ubicacion_id")
+  reportadoPor Int            @map("reportado_por")
+  nota         String?
+  estado       EstadoHallazgo @default(reportado)
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+
+  qrCodigo   QrCodigo  @relation(fields: [qrCodigoId], references: [id])
+  ubicacion  Ubicacion @relation(fields: [ubicacionId], references: [id])
+  reportante Usuario   @relation("HallazgoReportadoPor", fields: [reportadoPor], references: [id])
+
+  notificaciones Notificacion[]
+
+  @@index([qrCodigoId])
+  @@index([ubicacionId])
+  @@index([reportadoPor])
+  @@map("hallazgo")
+}
+
+model Notificacion {
+  id           Int                @id @default(autoincrement())
+  hallazgoId   Int                @map("hallazgo_id")
+  canal        CanalNotificacion
+  destinatario String
+  estado       EstadoNotificacion @default(pendiente)
+  payload      Json
+  enviadaAt    DateTime?          @map("enviada_at")
+  createdAt    DateTime           @default(now()) @map("created_at")
+
+  hallazgo Hallazgo @relation(fields: [hallazgoId], references: [id])
+
+  @@index([hallazgoId])
+  @@map("notificacion")
+}
