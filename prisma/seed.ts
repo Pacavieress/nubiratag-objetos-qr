@@ -35,6 +35,16 @@ async function main() {
   });
 
   console.log(`Usuario admin listo: ${admin.email}`);
+
+  const UBICACIONES_DEFAULT = ["Recepción", "Inspectoría", "Portería"];
+
+  for (const nombre of UBICACIONES_DEFAULT) {
+    const existente = await prisma.ubicacion.findFirst({ where: { nombre } });
+    if (!existente) {
+      await prisma.ubicacion.create({ data: { nombre } });
+      console.log(`Ubicación creada: ${nombre}`);
+    }
+  }
 }
 
 main()
