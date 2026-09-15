@@ -8,7 +8,7 @@ export default async function EstudiantesPage() {
   });
 
   return (
-    <main className="mx-auto max-w-3xl px-4 py-8">
+    <main>
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Estudiantes</h1>
         <Link

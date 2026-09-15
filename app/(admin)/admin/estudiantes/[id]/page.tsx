@@ -33,7 +33,7 @@ export default async function EstudianteDetallePage({
   }
 
   return (
-    <main className="mx-auto max-w-3xl px-4 py-8 flex flex-col gap-10">
+    <main className="flex flex-col gap-10">
       <div>
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-xl font-semibold">{estudiante.nombre}</h1>
