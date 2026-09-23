@@ -1,7 +1,15 @@
+import { CheckCircle2 } from "lucide-react";
+
 import { LockScroll } from "@/components/lock-scroll";
 import { LoginForm } from "./login-form";
 
-export default function LoginPage() {
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ verificado?: string }>;
+}) {
+  const { verificado } = await searchParams;
+
   return (
     <main className="flex h-dvh w-full overflow-hidden overscroll-none">
       <LockScroll />
@@ -46,6 +54,16 @@ export default function LoginPage() {
               Ingresa tus datos para continuar.
             </p>
           </div>
+
+          {verificado === "1" && (
+            <div
+              role="status"
+              className="mb-4 flex items-start gap-2 rounded-lg bg-green-50 px-3 py-2.5 text-sm text-green-700"
+            >
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+              <p>Tu correo quedó verificado. Ya puedes iniciar sesión.</p>
+            </div>
+          )}
 
           <LoginForm />
         </div>

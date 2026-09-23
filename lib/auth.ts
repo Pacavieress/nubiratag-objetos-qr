@@ -1,8 +1,18 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
+import { CredentialsSignin } from "next-auth";
 import bcrypt from "bcryptjs";
 
 import { prisma } from "@/lib/db";
+
+// Lanzado desde authorize() cuando un apoderado no verificado intenta
+// entrar. Al extender CredentialsSignin, Auth.js relanza esta instancia
+// tal cual (confirmado en @auth/core/index.js: isAuthError && isRaw &&
+// !isRedirect => throw error) hasta actions.ts, donde se distingue del
+// mensaje genérico "Credenciales inválidas." por su código.
+export class EmailNoVerificadoError extends CredentialsSignin {
+  code = "email-no-verificado";
+}
 
 // "Mantener sesión" del login: marcado, el JWT vive 30 días; sin marcar,
 // 1 día de inactividad (se recalcula en cada request mientras la sesión
@@ -53,6 +63,12 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         if (!passwordValida) {
           return null;
+        }
+
+        // Solo apoderado pasa por el flujo de auto-registro/verificación;
+        // admin y funcionario se crean manualmente y quedan exentos.
+        if (usuario.rol === "apoderado" && !usuario.emailVerificado) {
+          throw new EmailNoVerificadoError();
         }
 
         return {

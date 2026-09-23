@@ -69,6 +69,16 @@ model Usuario {
   activo       Boolean    @default(true)
   createdAt    DateTime   @default(now()) @map("created_at")
 
+  // Verificación de correo para el auto-registro de apoderados (admin y
+  // funcionario se crean manualmente y quedan exentos del chequeo en
+  // lib/auth.ts). El token vive directo acá, no en una tabla aparte: es
+  // 1:1 y no necesita historial — mismo criterio que QrCodigo.token.
+  // Reenviar el correo de verificación simplemente sobrescribe estos dos
+  // campos.
+  emailVerificado         Boolean   @default(false) @map("email_verificado")
+  tokenVerificacion       String?   @unique @map("token_verificacion")
+  tokenVerificacionExpira DateTime? @map("token_verificacion_expira")
+
   colegio Colegio? @relation(fields: [colegioId], references: [id])
 
   hijos               Estudiante[] @relation("ApoderadoDeEstudiante")

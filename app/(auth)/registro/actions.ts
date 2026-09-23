@@ -1,12 +1,12 @@
 "use server";
 
-import { AuthError } from "next-auth";
 import { redirect } from "next/navigation";
+import { randomBytes } from "crypto";
 import bcrypt from "bcryptjs";
 import { Prisma } from "@prisma/client";
 
-import { signIn } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { enviarCorreoVerificacion } from "@/lib/email";
 
 // Mismo costo que usa el seed (prisma/seed.ts) y el resto del proyecto.
 const BCRYPT_COST = 12;
@@ -54,6 +54,10 @@ export async function registrarApoderado(
 
   const passwordHash = await bcrypt.hash(password, BCRYPT_COST);
 
+  // Mismo patrón que lib/qr.ts#generarToken: 128 bits, base64url.
+  const tokenVerificacion = randomBytes(16).toString("base64url");
+  const tokenVerificacionExpira = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
   try {
     await prisma.usuario.create({
       data: {
@@ -63,6 +67,9 @@ export async function registrarApoderado(
         rol: "apoderado",
         colegioId: colegio.id,
         activo: true,
+        emailVerificado: false,
+        tokenVerificacion,
+        tokenVerificacionExpira,
       },
     });
   } catch (error) {
@@ -79,17 +86,11 @@ export async function registrarApoderado(
     throw error;
   }
 
-  try {
-    await signIn("credentials", { email, password, redirect: false });
-  } catch (error) {
-    if (error instanceof AuthError) {
-      // No debería pasar (la cuenta se acaba de crear con estas mismas
-      // credenciales), pero si pasa igual la cuenta ya quedó creada:
-      // manda al login para que entre manualmente.
-      redirect("/login");
-    }
-    throw error;
-  }
+  await enviarCorreoVerificacion({
+    destinatario: email,
+    nombre,
+    token: tokenVerificacion,
+  });
 
-  redirect("/apoderado");
+  redirect("/registro/exito");
 }

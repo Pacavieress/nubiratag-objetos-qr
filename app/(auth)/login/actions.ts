@@ -3,7 +3,7 @@
 import { AuthError } from "next-auth";
 import { redirect } from "next/navigation";
 
-import { signIn } from "@/lib/auth";
+import { signIn, EmailNoVerificadoError } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 
 export async function authenticate(
@@ -21,6 +21,9 @@ export async function authenticate(
       redirect: false,
     });
   } catch (error) {
+    if (error instanceof EmailNoVerificadoError) {
+      return "Debes verificar tu correo antes de iniciar sesión. Revisa tu bandeja de entrada.";
+    }
     if (error instanceof AuthError) {
       return "Credenciales inválidas.";
     }
