@@ -5,6 +5,7 @@ import { ArrowLeft, ClipboardList, Minus, Plus, QrCode } from "lucide-react";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { cambiarActivoEstudiante, generarQrCode, revocarQr } from "../actions";
+import { BotonSubmit } from "../boton-submit";
 import { EtiquetaForm } from "./etiqueta-form";
 import { ConfirmarAccion } from "./confirmar-accion";
 
@@ -103,12 +104,7 @@ export default async function EstudianteDetallePage({
               <form
                 action={cambiarActivoEstudiante.bind(null, estudiante.id, true)}
               >
-                <button
-                  type="submit"
-                  className="w-full rounded-xl border border-gray-300 px-5 py-3.5 text-base font-medium text-gray-700 sm:w-auto"
-                >
-                  Reactivar
-                </button>
+                <BotonSubmit label="Reactivar" variante="gris" />
               </form>
             )}
           </div>
@@ -157,12 +153,7 @@ export default async function EstudianteDetallePage({
                   className="rounded-lg border border-gray-300 px-4 py-3.5 text-base focus:border-[#54A6D8] focus:outline-none focus:ring-2 focus:ring-[#54A6D8]"
                 />
               </div>
-              <button
-                type="submit"
-                className="w-full rounded-xl bg-[#ff914d] px-5 py-3.5 text-base font-medium text-white transition hover:bg-[#e08044] sm:w-auto"
-              >
-                Generar QR
-              </button>
+              <BotonSubmit label="Generar QR" loadingLabel="Generando..." />
             </form>
           </div>
 

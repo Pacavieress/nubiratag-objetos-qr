@@ -1,6 +1,9 @@
 "use client";
 
 import { useRef } from "react";
+import { ArrowRight } from "lucide-react";
+
+import { BotonSubmit } from "../boton-submit";
 
 export function ConfirmarAccion({
   action,
@@ -22,9 +25,10 @@ export function ConfirmarAccion({
       <button
         type="button"
         onClick={() => dialogRef.current?.showModal()}
-        className="w-full rounded-xl border border-red-200 bg-red-50 px-5 py-3.5 text-base font-medium text-red-600 sm:w-auto"
+        className="flex w-full items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-5 py-2.5 text-sm font-medium text-red-600 sm:w-auto"
       >
         {textoBoton}
+        <ArrowRight className="h-4 w-4" />
       </button>
 
       <dialog
@@ -36,12 +40,7 @@ export function ConfirmarAccion({
 
         <div className="mt-6 flex flex-col gap-2">
           <form action={action} onSubmit={() => dialogRef.current?.close()}>
-            <button
-              type="submit"
-              className="w-full rounded-xl bg-red-600 px-5 py-3.5 text-base font-medium text-white"
-            >
-              {textoConfirmar}
-            </button>
+            <BotonSubmit label={textoConfirmar} variante="rojo" />
           </form>
           <button
             type="button"
