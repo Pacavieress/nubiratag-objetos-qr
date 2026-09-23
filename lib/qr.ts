@@ -13,5 +13,5 @@ export function construirUrlQr(token: string): string {
 
 /** Data URL PNG lista para usar en <img src="...">. */
 export async function generarImagenQr(token: string): Promise<string> {
-  return QRCode.toDataURL(construirUrlQr(token));
+  return QRCode.toDataURL(construirUrlQr(token), { margin: 2 });
 }

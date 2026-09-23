@@ -45,6 +45,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           email: usuario.email,
           name: usuario.nombre,
           rol: usuario.rol,
+          colegioId: usuario.colegioId,
         };
       },
     }),
@@ -54,12 +55,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (user) {
         token.id = user.id!;
         token.rol = user.rol;
+        token.colegioId = user.colegioId;
       }
       return token;
     },
     async session({ session, token }) {
       session.user.id = token.id;
       session.user.rol = token.rol;
+      session.user.colegioId = token.colegioId;
       return session;
     },
   },

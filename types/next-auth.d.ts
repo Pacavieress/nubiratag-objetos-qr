@@ -7,12 +7,14 @@ import type { RolUsuario } from "@prisma/client";
 declare module "@auth/core/types" {
   interface User {
     rol: RolUsuario;
+    colegioId: number | null;
   }
 
   interface Session {
     user: {
       id: string;
       rol: RolUsuario;
+      colegioId: number | null;
     } & DefaultSession["user"];
   }
 }
@@ -21,5 +23,6 @@ declare module "@auth/core/jwt" {
   interface JWT {
     id: string;
     rol: RolUsuario;
+    colegioId: number | null;
   }
 }

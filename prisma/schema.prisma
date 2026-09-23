@@ -13,6 +13,7 @@ datasource db {
 enum RolUsuario {
   admin
   funcionario
+  apoderado
 }
 
 enum EstadoQr {
@@ -38,79 +39,113 @@ enum EstadoNotificacion {
   fallida
 }
 
+model Colegio {
+  id             Int      @id @default(autoincrement())
+  nombre         String
+  codigoRegistro String   @unique @map("codigo_registro")
+  activo         Boolean  @default(true)
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  usuarios    Usuario[]
+  estudiantes Estudiante[]
+  qrCodigos   QrCodigo[]
+  ubicaciones Ubicacion[]
+
+  @@map("colegio")
+}
+
 model Usuario {
   id           Int        @id @default(autoincrement())
   email        String     @unique
   passwordHash String     @map("password_hash")
   nombre       String
   rol          RolUsuario
+  // colegioId es NULL únicamente para rol = admin (administrador global de
+  // plataforma, no pertenece a ningún colegio). Para funcionario y apoderado
+  // es obligatorio. Prisma/MariaDB no expresan bien un CHECK condicional
+  // rol -> colegioId, así que esta regla se valida a nivel de aplicación
+  // (no acá en el schema).
+  colegioId    Int?       @map("colegio_id")
   activo       Boolean    @default(true)
   createdAt    DateTime   @default(now()) @map("created_at")
 
-  hallazgosReportados Hallazgo[] @relation("HallazgoReportadoPor")
+  colegio Colegio? @relation(fields: [colegioId], references: [id])
 
+  hijos               Estudiante[] @relation("ApoderadoDeEstudiante")
+  hallazgosReportados Hallazgo[]   @relation("HallazgoReportadoPor")
+
+  @@index([colegioId])
   @@map("usuario")
 }
 
 model Estudiante {
-  id                Int      @id @default(autoincrement())
-  nombre            String
-  curso             String
-  apoderadoNombre   String   @map("apoderado_nombre")
-  apoderadoEmail    String   @map("apoderado_email")
-  apoderadoTelefono String?  @map("apoderado_telefono")
-  activo            Boolean  @default(true)
-  createdAt         DateTime @default(now()) @map("created_at")
+  id          Int      @id @default(autoincrement())
+  nombre      String
+  curso       String?
+  apoderadoId Int      @map("apoderado_id")
+  colegioId   Int      @map("colegio_id")
+  activo      Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at")
 
+  apoderado Usuario    @relation("ApoderadoDeEstudiante", fields: [apoderadoId], references: [id])
+  colegio   Colegio    @relation(fields: [colegioId], references: [id])
   qrCodigos QrCodigo[]
 
+  @@index([apoderadoId])
+  @@index([colegioId])
   @@map("estudiante")
 }
 
 model QrCodigo {
   id           Int      @id @default(autoincrement())
   estudianteId Int      @map("estudiante_id")
+  colegioId    Int      @map("colegio_id")
   token        String   @unique
   etiqueta     String?
   estado       EstadoQr @default(activo)
   createdAt    DateTime @default(now()) @map("created_at")
 
   estudiante Estudiante @relation(fields: [estudianteId], references: [id])
+  colegio    Colegio    @relation(fields: [colegioId], references: [id])
   hallazgos  Hallazgo[]
 
   @@index([estudianteId])
+  @@index([colegioId])
   @@map("qr_codigo")
 }
 
 model Ubicacion {
-  id     Int     @id @default(autoincrement())
-  nombre String
-  activo Boolean @default(true)
+  id        Int     @id @default(autoincrement())
+  colegioId Int     @map("colegio_id")
+  nombre    String
+  activo    Boolean @default(true)
 
+  colegio   Colegio    @relation(fields: [colegioId], references: [id])
   hallazgos Hallazgo[]
 
+  @@index([colegioId])
   @@map("ubicacion")
 }
 
 model Hallazgo {
-  id           Int            @id @default(autoincrement())
-  qrCodigoId   Int            @map("qr_codigo_id")
-  ubicacionId  Int            @map("ubicacion_id")
-  reportadoPor Int            @map("reportado_por")
-  nota         String?
-  estado       EstadoHallazgo @default(reportado)
-  createdAt    DateTime       @default(now()) @map("created_at")
-  updatedAt    DateTime       @updatedAt @map("updated_at")
+  id             Int            @id @default(autoincrement())
+  qrCodigoId     Int            @map("qr_codigo_id")
+  ubicacionId    Int            @map("ubicacion_id")
+  reportadoPorId Int            @map("reportado_por")
+  nota           String?
+  estado         EstadoHallazgo @default(reportado)
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
 
   qrCodigo   QrCodigo  @relation(fields: [qrCodigoId], references: [id])
   ubicacion  Ubicacion @relation(fields: [ubicacionId], references: [id])
-  reportante Usuario   @relation("HallazgoReportadoPor", fields: [reportadoPor], references: [id])
+  reportante Usuario   @relation("HallazgoReportadoPor", fields: [reportadoPorId], references: [id])
 
   notificaciones Notificacion[]
 
   @@index([qrCodigoId])
   @@index([ubicacionId])
-  @@index([reportadoPor])
+  @@index([reportadoPorId])
   @@map("hallazgo")
 }
 

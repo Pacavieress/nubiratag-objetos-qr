@@ -12,8 +12,11 @@ export function Sidebar() {
 
   return (
     <aside className="hidden md:flex w-64 flex-col bg-white border-r border-gray-100">
-      <div className="px-4 py-5">
-        <span className="text-lg font-semibold text-gray-900">NubiraTag</span>
+      <div className="px-4 py-2">
+        <span className="text-2xl font-semibold">
+          <span className="text-[#2c7bc0]">Nubira</span>
+          <span className="text-[#ff914d]">Tag</span>
+        </span>
       </div>
 
       <nav className="flex-1 px-3 flex flex-col gap-1">
@@ -25,7 +28,7 @@ export function Sidebar() {
             <Link
               key={item.href}
               href={item.href}
-              className={`group flex items-center gap-3 px-3 py-2.5 rounded-xl border-l-4 transition ${
+              className={`group flex items-center gap-3 px-3 py-2.5 rounded-xl border-l-4 text-[13px] transition ${
                 activo
                   ? "border-[#54A6D8] bg-[#54A6D8]/10 text-[#54A6D8]"
                   : "border-transparent text-gray-600 hover:border-[#54A6D8] hover:bg-[#54A6D8]/5 hover:text-gray-900"

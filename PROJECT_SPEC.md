@@ -2,7 +2,11 @@
 
 > Especificación técnica inicial. Documento de contexto para Claude Code.
 > Estado: **análisis y diseño cerrado, sin código aún.**
-> Las decisiones marcadas **[CONFIRMAR]** son forks de producto/arquitectura que el desarrollador debe aprobar u override antes de programar.
+> Las decisiones marcadas **[CONFIRMAR]** son forks de producto/arquitectura que el desarrollador debe aprobar u override antes de programar. Las marcadas **[CONFIRMADO]** ya fueron resueltas y sobrescriben una decisión anterior.
+>
+> **Revisión 2026-09-16 (1):** se invierte el modelo de apoderado (pasa a tener cuenta propia) y se incorpora multi-colegio a nivel de datos. Ver el detalle en cada sección afectada y el resumen de reordenamiento en el punto 24.
+> **Revisión 2026-09-16 (2):** se elimina el "admin por colegio" — el rol `admin` pasa a ser un administrador único y global de la plataforma (`colegio_id` NULL), dueño del sistema. Crea colegios, cuentas de funcionario y ubicaciones por colegio; no accede a PII nominal de menores. Ver puntos 3, 7, 9, 12, 16, 17, 23 y 24.
+> **Revisión 2026-09-21:** excepción puntual al punto 6 — se agrega un escáner de cámara **dentro del panel** del funcionario (`/funcionario/escanear`), aunque el punto 6 marcaba "scanner propio" como innecesario/fuera del MVP. Motivo: agiliza el flujo sin depender de que el celular abra la app de cámara del sistema operativo. No reemplaza ni duplica la validación de `/q/[token]`: el escáner solo decodifica el QR y navega a esa misma URL, que sigue siendo el único lugar donde se valida pertenencia por colegio y se registra el hallazgo. Ver puntos 6, 11 y 17.
 
 ---
 
@@ -33,57 +37,62 @@ Al encontrar un objeto, un funcionario escanea el QR: el sistema resuelve intern
 
 | Rol | Descripción | MVP |
 |-----|-------------|-----|
-| **Admin colegio** | Gestiona estudiantes, genera/imprime QRs, administra usuarios y ubicaciones, ve historial. | Sí |
-| **Funcionario / Inspector** | Escanea QR, registra ubicación del objeto, confirma retiro. Personal autenticado. | Sí |
-| **Apoderado / Estudiante** | Recibe notificaciones. En MVP **no tiene cuenta**: solo recibe correo. Panel propio → etapa 2. | Solo como receptor |
+| **Administrador de plataforma** (`admin`) | **Único y global** — es el dueño/desarrollador del sistema, no pertenece a ningún colegio (`colegio_id` NULL). Gestiona colegios, sus códigos de registro, crea y administra las cuentas de `funcionario` de cada colegio, y configura las ubicaciones por colegio. **No** accede a la lista nominal de estudiantes ni apoderados (ver punto 12). No existe un rol de admin del lado del colegio — el colegio solo aporta los funcionarios que escanean. | Sí |
+| **Funcionario / Inspector** | Escanea QR, registra ubicación del objeto, confirma retiro. Personal autenticado, con cuenta creada por el admin, ligado a un colegio (`colegio_id` no nulo). | Sí |
+| **Apoderado** | Rol logueable, con cuenta propia. Se registra con el código de registro de un colegio y queda ligado a él. Agrega a sus hijos (estudiantes), genera y asigna sus códigos QR, recibe notificaciones. | Sí |
 | **Persona externa (scanner anónimo)** | Cualquiera que escanee el QR. Ve solo una página neutra sin datos. No puede disparar notificaciones. | Sí (pasivo) |
 
-**[CONFIRMAR]** El apoderado NO tiene cuenta en el MVP. Se agrega en etapa 2.
+**[CONFIRMADO]** El apoderado **SÍ** tiene cuenta en el MVP (rol logueable) — se invierte la decisión anterior de "apoderado sin cuenta".
+
+**[CONFIRMADO]** Se elimina el concepto de "admin por colegio". El `admin` es un administrador **global de plataforma**, único — no hay un admin del lado de cada colegio.
 
 ---
 
-## 4. Flujo completo (creación de estudiante y QR → recuperación de objeto)
+## 4. Flujo completo (registro de apoderado → recuperación de objeto)
 
-1. **Alta de estudiante:** el admin crea el estudiante con datos mínimos (nombre, curso, contacto del apoderado).
-2. **Generación de QR:** el sistema genera N tokens aleatorios asociados al estudiante y produce una hoja imprimible con los N QR.
-3. **Etiquetado físico:** el estudiante/apoderado pega cada QR en un objeto y, opcionalmente, lo etiqueta en el sistema ("polerón", "mochila").
-4. **Pérdida:** el objeto se extravía.
-5. **Hallazgo:** un funcionario encuentra el objeto y escanea el QR con la cámara del celular → abre `https://app.../q/<token>`.
-6. **Resolución interna:** el backend resuelve el token a un estudiante **sin mostrar datos** en la pantalla pública.
-7. **Registro:** el funcionario (autenticado) selecciona la ubicación donde dejó el objeto y agrega nota opcional. Se crea un **hallazgo**.
-8. **Notificación:** el sistema envía correo al apoderado: "Se encontró un objeto de [estudiante]. Retíralo en [ubicación]."
-9. **Retiro:** el apoderado/estudiante retira el objeto; el funcionario marca el hallazgo como **retirado**.
-10. **Trazabilidad:** todo el ciclo queda en el historial.
+1. **Registro del apoderado:** se registra con el **código de registro del colegio** (un código por colegio, no por curso) y queda ligado a ese colegio.
+2. **Alta de estudiante:** el **apoderado** agrega a su(s) hijo(s) con datos mínimos (nombre, curso opcional/autodeclarado).
+3. **Generación de QR:** el **apoderado** genera N tokens aleatorios asociados al estudiante y descarga una hoja/PDF imprimible con los N QR. El token lleva el `colegio_id` en la base de datos, **no** en la URL.
+4. **Etiquetado físico:** el apoderado/estudiante pega cada QR en un objeto y, opcionalmente, lo etiqueta en el sistema ("polerón", "mochila").
+5. **Pérdida:** el objeto se extravía.
+6. **Hallazgo:** un funcionario encuentra el objeto y escanea el QR con la cámara del celular → abre `https://app.../q/<token>`.
+7. **Resolución interna:** el backend resuelve el token a un estudiante (y su colegio) **sin mostrar datos** en la pantalla pública.
+8. **Registro:** el funcionario (autenticado) selecciona la ubicación donde dejó el objeto y agrega nota opcional. **El sistema valida server-side que el `colegio_id` del funcionario coincida con el `colegio_id` del `qr_codigo`; si no coincide, la acción se rechaza.** Se crea un **hallazgo**.
+9. **Notificación:** el sistema envía correo al apoderado: "Se encontró un objeto de [estudiante]. Retíralo en [ubicación]."
+10. **Retiro:** el apoderado/estudiante retira el objeto; el funcionario marca el hallazgo como **retirado**.
+11. **Trazabilidad:** todo el ciclo queda en el historial.
 
-**Escaneo anónimo (persona externa):** paso 5 abre la página neutra ("Este objeto pertenece a un estudiante del colegio. Por favor déjalo en Inspectoría."). No permite registrar hallazgo ni notificar. Solo el personal autenticado ejecuta los pasos 7–9.
+**Escaneo anónimo (persona externa):** el paso 6 abre la página neutra ("Este objeto pertenece a un estudiante del colegio. Por favor déjalo en Inspectoría."). No permite registrar hallazgo ni notificar. Solo el personal autenticado ejecuta los pasos 8–10.
 
 ---
 
 ## 5. Funcionalidades del MVP
 
-- CRUD de estudiantes (admin).
-- Generación de N QR por estudiante + hoja imprimible (PNG/SVG).
+- Registro de apoderado con código de registro del colegio (login propio).
+- CRUD de estudiantes (apoderado, sobre sus propios hijos).
+- Generación de N QR por estudiante (apoderado) + hoja/PDF imprimible.
 - Etiquetado opcional del QR.
-- Autenticación de personal (admin + funcionario).
+- Autenticación de personal (admin + funcionario) y de apoderados.
 - Página pública de escaneo (neutra, sin PII).
-- Registro de hallazgo por funcionario autenticado (ubicación + nota).
+- Registro de hallazgo por funcionario autenticado (ubicación + nota), con validación de `colegio_id`.
 - Catálogo de ubicaciones (Recepción, Inspectoría, Portería, etc.).
 - Notificación por **correo** al apoderado.
 - Estados de hallazgo (reportado → retirado).
-- Historial/trazabilidad básico por estudiante y por QR.
+- Historial/trazabilidad básico por estudiante y por QR (vista admin).
 - Revocación de QR.
+- Multi-colegio a nivel de datos (aislamiento server-side por `colegio_id`).
+- Gestión de colegio y su código de registro (admin).
 
 ---
 
 ## 6. Fuera del MVP (etapa 2+)
 
-- Panel de apoderado/estudiante con login.
 - Notificaciones por WhatsApp.
 - Notificaciones web/PWA push.
-- PWA instalable / scanner propio (innecesario: la cámara nativa abre la URL).
+- PWA instalable (sigue fuera del MVP). *(**Excepción, revisión 2026-09-21:** el escáner de cámara **sí** se implementa dentro del panel del funcionario en `/funcionario/escanear` — ver punto 11 —, como atajo adicional; la cámara nativa del sistema operativo abriendo `/q/<token>` directamente sigue funcionando igual y sin cambios.)*
 - Reportes/estadísticas avanzadas.
-- Multi-colegio (multi-tenant).
 - Autoservicio: que el apoderado reporte "encontré esto" desde el escaneo público (abre superficie de abuso; evaluar con moderación por staff).
+- Vista de **historial de hallazgos dentro del panel del apoderado** — el evento de escaneo/hallazgo se persiste desde el día uno en la base de datos; lo que se difiere es únicamente la superficie de consulta para el apoderado.
 
 ---
 
@@ -91,38 +100,48 @@ Al encontrar un objeto, un funcionario escanea el QR: el sistema resuelve intern
 
 Tablas (MariaDB/MySQL):
 
-**usuario** — personal autenticado
+**colegio** *(entidad nueva)*
+- `id` PK
+- `nombre`
+- `codigo_registro` UNIQUE
+- `activo` BOOL
+- `created_at`
+
+**usuario** — personal autenticado y apoderados (unificados en la misma tabla)
 - `id` PK
 - `email` UNIQUE
 - `password_hash`
 - `nombre`
-- `rol` (`admin` | `funcionario`)
+- `rol` (`admin` | `funcionario` | `apoderado`)
+- `colegio_id` FK → colegio, **nullable**: `NULL` únicamente para `rol = admin` (administrador global de plataforma, no pertenece a ningún colegio); **obligatorio** (not null) para `funcionario` y `apoderado`. A nivel de aplicación (o `CHECK` constraint si el motor lo soporta): `rol = 'admin' ⇒ colegio_id IS NULL`, `rol IN ('funcionario', 'apoderado') ⇒ colegio_id IS NOT NULL`.
 - `activo` BOOL
 - `created_at`
 
 **estudiante**
 - `id` PK
 - `nombre`
-- `curso`
-- `apoderado_nombre`
-- `apoderado_email`
-- `apoderado_telefono` (nullable, para WhatsApp futuro)
+- `curso` (opcional, autodeclarado por el apoderado)
+- `apoderado_id` FK → usuario
+- `colegio_id` FK → colegio
 - `activo` BOOL
 - `created_at`
-- *(RUT omitido por minimización. **[CONFIRMAR]** si el colegio lo exige para cruce.)*
+- *(RUT omitido por minimización. **[CONFIRMAR]** si el colegio lo exige para cruce. Campos `apoderado_nombre`/`apoderado_email`/`apoderado_telefono` del modelo anterior se eliminan: esos datos ahora viven en `usuario` vía `apoderado_id`.)*
 
 **qr_codigo**
 - `id` PK
 - `estudiante_id` FK → estudiante
-- `token` UNIQUE (aleatorio, 128 bits)
+- `colegio_id` FK → colegio
+- `token` UNIQUE (aleatorio, 128 bits, **totalmente opaco, sin prefijo visible**)
 - `etiqueta` (nullable: "polerón", "mochila")
 - `estado` (`activo` | `revocado`)
 - `created_at`
 
-**ubicacion** — catálogo de puntos de retiro
+**ubicacion** — catálogo de puntos de retiro, **por colegio**
 - `id` PK
+- `colegio_id` FK → colegio
 - `nombre` (Recepción, Inspectoría, Portería…)
 - `activo` BOOL
+- *(Antes era un catálogo único compartido; con el admin de plataforma configurando ubicaciones por colegio, cada colegio tiene su propio set — resuelve un punto que había quedado abierto en una revisión anterior de esta spec.)*
 
 **hallazgo**
 - `id` PK
@@ -145,11 +164,16 @@ Tablas (MariaDB/MySQL):
 - `created_at`
 
 **Relaciones:**
+- colegio 1—N usuario
+- colegio 1—N estudiante
+- colegio 1—N qr_codigo
+- colegio 1—N ubicacion
+- usuario (apoderado) 1—N estudiante
 - estudiante 1—N qr_codigo
 - qr_codigo 1—N hallazgo
 - hallazgo 1—N notificacion
 - ubicacion 1—N hallazgo
-- usuario 1—N hallazgo (reportado_por)
+- usuario (reportado_por) 1—N hallazgo
 
 ---
 
@@ -169,9 +193,14 @@ Arquitectura deliberadamente simple: monolito Next.js, una base de datos, un pro
 
 ## 9. Autenticación y autorización
 
-- **No rodar auth casero.** Usar **Auth.js (NextAuth)** con proveedor Credentials (email + password) para el personal.
+- **No rodar auth casero.** Usar **Auth.js (NextAuth)** con proveedor Credentials (email + password) para el personal y los apoderados.
 - Passwords con **bcrypt/argon2**.
-- **Autorización por rol** vía middleware: rutas `/admin/**` solo `admin`; rutas de registro de hallazgo para `admin` + `funcionario`.
+- **Autorización por rol** vía middleware:
+  - Rutas `/admin/**` solo rol `admin` — y a diferencia de todos los demás roles, el admin **no** se filtra por `colegio_id`: tiene acceso global a todos los colegios. Es la única excepción al aislamiento por colegio de todo el sistema.
+  - Rutas de registro de hallazgo para `admin` + `funcionario`.
+  - Rutas `/apoderado/**` solo rol `apoderado`.
+  - El **funcionario**, dentro de su propio panel, ve únicamente los hallazgos de **su `colegio_id`** (filtro server-side, mismo criterio que la validación ya descrita en el punto 4/5 al registrar un hallazgo).
+- **[CRÍTICO DE SEGURIDAD] Aislamiento por dueño (no solo por colegio):** toda query que un apoderado haga sobre sus hijos, sus QR o los hallazgos de esos QR debe filtrarse server-side por el `apoderado_id` del estudiante/QR consultado, comparado contra el `id` del `usuario` en sesión. Un apoderado **nunca** puede ver ni modificar datos de estudiantes o QR de otro apoderado, ni aunque adivine o enumere IDs — son datos de menores de familias distintas. Esto es un chequeo aparte y más estricto que el aislamiento por `colegio_id` del punto 4/5: dos apoderados del **mismo** colegio siguen sin poder verse entre sí.
 - Sesiones con cookies httpOnly + SameSite.
 - El endpoint público de escaneo **no** requiere sesión, pero **no expone acciones sensibles** sin ella.
 
@@ -179,9 +208,9 @@ Arquitectura deliberadamente simple: monolito Next.js, una base de datos, un pro
 
 ## 10. Generación y validación segura de QR
 
-- **Token:** 128 bits de aleatoriedad criptográfica (`crypto.randomBytes`), codificado URL-safe. **Nunca** IDs secuenciales.
-- El QR codifica una **URL**: `https://app.colegio.cl/q/<token>`.
-- **Generación de imagen:** librería `qrcode` → SVG/PNG. Hoja imprimible con los N QR del estudiante + etiqueta legible ("Estudiante: [nombre] — no incluir en el QR, solo en la hoja del admin").
+- **Token:** 128 bits de aleatoriedad criptográfica (`crypto.randomBytes`), codificado URL-safe. **Nunca** IDs secuenciales. **Totalmente opaco, sin prefijo visible de colegio ni de ningún otro tipo.**
+- El QR codifica una **URL**: `https://app.colegio.cl/q/<token>` — la URL **no** lleva segmento ni prefijo de colegio; el colegio se resuelve server-side vía `qr_codigo.colegio_id`, nunca a partir de la URL.
+- **Generación de imagen:** librería `qrcode` → SVG/PNG. El **apoderado** descarga una hoja/PDF imprimible con los N QR del estudiante + etiqueta legible ("Estudiante: [nombre]" — no incluir en el QR, solo en la hoja/PDF).
 - **Validación:** al recibir `<token>`, el backend busca `qr_codigo` activo. Si no existe o está revocado → página neutra "código no válido". Nunca revela por qué.
 - **Rate limiting** en `/q/<token>` para frenar enumeración y abuso.
 
@@ -193,6 +222,7 @@ Arquitectura deliberadamente simple: monolito Next.js, una base de datos, un pro
   - **Sin sesión:** página neutra, cero PII, mensaje de instrucción ("déjalo en Inspectoría").
   - **Con sesión (funcionario/admin):** además muestra formulario para registrar hallazgo (selector de ubicación + nota) y botón para notificar.
 - La misma URL sirve a ambos; el contenido se decide server-side según sesión. Esto evita necesitar app o scanner propio: la cámara nativa del teléfono abre la URL.
+- **Entrada adicional (revisión 2026-09-21):** el funcionario también puede escanear desde un lector de cámara embebido en su propio panel, `/funcionario/escanear`. Ese lector no reimplementa ninguna validación: decodifica el QR (o recibe el código por ingreso manual, requerido porque `getUserMedia` exige HTTPS o `localhost`), y navega a `/q/<token>` — la misma URL de siempre, con la misma resolución server-side de colegio y el mismo formulario de registro.
 
 ---
 
@@ -202,8 +232,9 @@ Arquitectura deliberadamente simple: monolito Next.js, una base de datos, un pro
 - La superficie pública **nunca** muestra nombre, RUT, curso, correo, teléfono ni datos del apoderado.
 - **Minimización:** guardar el mínimo de PII. RUT omitido por defecto.
 - Datos del apoderado accesibles solo a personal autenticado y solo cuando es necesario para el flujo.
-- **Cumplimiento legal (Chile):** Ley 19.628 y Ley 21.719 sobre datos personales; al tratarse de **menores**, se requiere consentimiento informado del apoderado. Definir con el colegio el proceso de consentimiento y quién es el responsable del tratamiento de datos.
+- **Cumplimiento legal (Chile):** Ley 19.628 y Ley 21.719 sobre datos personales; al tratarse de **menores**, se requiere consentimiento informado del apoderado. En este modelo, es el propio **apoderado (tutor legal)** quien ingresa los datos del menor y otorga el consentimiento al crear la ficha del estudiante — no el colegio. Esto mejora la posición de responsabilidad del tratamiento respecto al modelo anterior, aunque el colegio sigue siendo responsable de la plataforma que aloja esos datos.
 - Notificaciones dirigidas al apoderado por defecto (titular del contacto de un menor).
+- **Alcance del administrador de plataforma:** pese a tener acceso global (todos los colegios), el admin **no** accede a la lista nominal de estudiantes ni a los datos de los apoderados (nombres de menores, contactos de familias). Su alcance es de gestión y operación — colegios, cuentas de funcionarios, ubicaciones, estados y conteos de hallazgos —, nunca el listado nominal de menores. Esto preserva el principio de minimización de este documento y evita concentrar datos de menores de múltiples colegios en una sola cuenta.
 
 ---
 
@@ -226,32 +257,53 @@ Arquitectura deliberadamente simple: monolito Next.js, una base de datos, un pro
 
 ---
 
-## 15. Panel del estudiante/apoderado (etapa 2)
+## 15. Panel del apoderado (MVP)
 
-- Login del apoderado (magic link por correo recomendado sobre password, por baja fricción).
-- Ver sus QR, etiquetarlos, revocarlos.
-- Historial de hallazgos de sus objetos.
-- Preferencia de canal de notificación.
-- **No** forma parte del MVP.
+> **Cambió de sección:** este panel estaba descrito como "Panel del estudiante/apoderado (etapa 2)" y fuera del MVP. Con la inversión de la decisión de cuentas de apoderado, pasa a ser parte del núcleo del MVP.
+
+- Registro con el código de registro del colegio; el apoderado queda ligado a ese colegio (ver subsección "Registro (sign-up)" abajo).
+- CRUD de sus hijos (estudiante): alta, edición, baja lógica.
+- Generación, asignación y descarga de QR como PDF imprimible por estudiante.
+- Etiquetado y revocación de sus propios QR.
+- Recepción de notificaciones (correo, MVP).
+- **Fuera de esta fase del rol** (el evento de escaneo/hallazgo igual se persiste desde el día uno en la base): vista de historial de hallazgos dentro del panel del apoderado — se habilita como segunda fase, reutilizando datos ya guardados desde el MVP.
+
+### Registro (sign-up) del apoderado
+
+La spec anterior decía "el apoderado se registra con el código" sin definir el mecanismo — falta porque Auth.js Credentials, tal como está descrito en el punto 9, solo resuelve **login** de usuarios ya existentes; no crea cuentas por sí solo. Esto define ese flujo:
+
+- **Página pública** `/registro` (fuera de `/apoderado/**` — ese árbol exige sesión con rol `apoderado` ya creada, así que el sign-up no puede vivir ahí; tampoco requiere sesión de ningún tipo, igual que `/login`).
+- El formulario pide: **email, password, nombre** y el **código de registro del colegio**.
+- **Validación del código:** el backend busca `colegio` por `codigo_registro`. Si existe y el colegio está `activo`, se crea el `usuario` con `rol = 'apoderado'` y `colegio_id` del colegio encontrado.
+- **Código inválido** (no existe, o el colegio está `activo = false`): se rechaza el registro con un mensaje de error. A diferencia del escaneo de QR (punto 10), acá no hace falta ocultar el motivo exacto — no hay un tercero cuya privacidad proteger, es el propio usuario intentando crear su cuenta.
+- **Email ya existente:** se rechaza el registro ("Ya existe una cuenta con este email."). No se permite duplicar ni pisar la cuenta existente — si el usuario cree que la cuenta es suya, el camino correcto es `/login`, no un nuevo registro.
+- Password: mismo hashing que el resto del sistema (bcrypt/argon2, punto 9).
+- **Verificación de correo — [CONFIRMAR] (recomendación, no decisión cerrada):** dado que es un proyecto académico y el canal de correo transaccional recién se implementa en la Etapa 5 (Notificaciones), se recomienda **no** exigir verificación de email al registrarse — bloquearía el sign-up antes de tener SMTP funcionando. El formato del email sí se valida en el form. Si más adelante se quiere reforzar (evitar registros con un email ajeno), conviene agregar verificación por link una vez lista la Etapa 5, cuando el costo marginal de esa verificación baja porque el sistema ya envía correos.
 
 ---
 
-## 16. Panel administrativo del colegio
+## 16. Panel del administrador de plataforma
 
-- CRUD de estudiantes.
-- Generación e impresión de QR.
-- Gestión de usuarios (funcionarios) y ubicaciones.
-- Vista de todos los hallazgos con filtros (estado, ubicación, fecha).
+> Renombrado desde "Panel administrativo del colegio": ya no es un panel por colegio, es el panel único del administrador global (punto 3).
+
+- CRUD de **colegios** + generación de sus códigos de registro.
+- Creación y gestión de cuentas de **funcionario**, de cualquier colegio (no hay auto-registro de funcionario — las cuentas las crea el admin).
+- Gestión de **ubicaciones por colegio**.
+- Vista **global** de todos los hallazgos (de todos los colegios), con filtros (estado, ubicación, fecha, colegio).
 - Revocación de QR.
 - Auditoría de notificaciones.
+
+*(El admin no tiene CRUD de estudiantes ni genera QR — ese flujo es del apoderado, ver punto 15. Tampoco administra nada "el colegio" en sí mismo como entidad con login propio: no existe un rol de admin del lado del colegio.)*
+
+*(El admin global nace por **seed** — es el primer usuario del sistema, con `colegio_id` NULL. No se crea desde la UI, porque es quien crea todo lo demás; ver también Etapa 1 en el punto 24.)*
 
 ---
 
 ## 17. Panel/flujo del funcionario/inspector
 
-- Login.
-- Flujo principal = escanear QR → registrar ubicación → confirmar (dispara notificación).
-- Lista de hallazgos abiertos para marcar retiro.
+- Login (cuenta creada por el admin, ver punto 16).
+- Flujo principal = escanear QR → registrar ubicación → confirmar (dispara notificación). El escaneo puede ser con la cámara nativa del sistema operativo (abre `/q/<token>` directo) o con el escáner embebido en `/funcionario/escanear` (revisión 2026-09-21, ver punto 11) — ambos terminan en la misma pantalla.
+- Lista de hallazgos abiertos **de su colegio** (filtrada por `colegio_id`) para marcar retiro.
 - UI móvil-first (escanean desde el celular).
 
 ---
@@ -323,14 +375,19 @@ Arquitectura deliberadamente simple: monolito Next.js, una base de datos, un pro
 /app
   /(public)
     /q/[token]/page.tsx        # escaneo público (neutro / con acción si hay sesión)
-  /(admin)
-    /admin/estudiantes/...
-    /admin/qr/...
-    /admin/hallazgos/...
-    /admin/usuarios/...
-    /admin/ubicaciones/...
+  /(admin)                      # solo rol 'admin' (global, sin filtro de colegio_id)
+    /admin/colegios/...        # CRUD de colegios + códigos de registro
+    /admin/funcionarios/...    # crear/gestionar cuentas de funcionario, de cualquier colegio
+    /admin/ubicaciones/...     # ubicaciones por colegio
+    /admin/hallazgos/...       # vista global, todos los colegios
+  /(apoderado)                 # solo rol 'apoderado' (ver punto 9); aislado por
+                                # apoderado_id, no solo por colegio_id
+    /apoderado/hijos/...       # CRUD de estudiantes (antes /admin/estudiantes)
+    /apoderado/qr/...          # generar/etiquetar/revocar QR (antes /admin/qr)
   /(auth)
     /login/...
+    /registro/...              # sign-up del apoderado (público, código de
+                                # colegio — NO va bajo /apoderado/**, ver punto 15)
   /api
     /q/[token]/route.ts        # resolución de token (si se separa del page)
     /notificaciones/route.ts   # worker/cron endpoint (opcional)
@@ -353,45 +410,71 @@ Arquitectura deliberadamente simple: monolito Next.js, una base de datos, un pro
 
 ## 24. Plan de desarrollo por etapas pequeñas y verificables
 
+> **Reorden respecto al modelo anterior:** los puntos marcados con `[ORDEN CAMBIÓ]` se movieron o se redefinieron por la inversión del modelo de apoderado y la entrada de multi-colegio al MVP. Revisar antes de tomarlo como definitivo.
+
 **Etapa 0 — Base**
 - Proyecto Next.js + TS + Tailwind + Prisma + MariaDB local.
-- `schema.prisma` con el modelo del punto 7. Migración inicial.
+- `schema.prisma` con el modelo del punto 7 (ahora incluye `colegio` y los campos nuevos de `usuario`/`estudiante`/`qr_codigo`). Migración inicial.
 
-**Etapa 1 — Auth de personal**
+**Etapa 1 — Auth de personal** `[AJUSTADO: admin ahora es global/de plataforma, no por colegio]`
 - Auth.js (Credentials), roles, middleware de autorización.
-- Login funcional para `admin` y `funcionario`.
+- El **admin global** nace por **seed**: primer usuario del sistema, `colegio_id` NULL. No se crea desde la UI, porque es quien crea todo lo demás.
+- Login funcional para `admin` y `funcionario`. Las cuentas de `funcionario` las crea el admin (no hay auto-registro de funcionario). *(El registro de `apoderado` sí es auto-servicio, un flujo propio, ver Etapa 2.)*
 
-**Etapa 2 — Estudiantes y QR**
-- CRUD estudiantes.
-- Generación de tokens + imágenes QR + hoja imprimible.
-- Etiquetado y revocación de QR.
+**Etapa 2 — Colegio, apoderado y QR** `[ORDEN CAMBIÓ]`
+- Antes era "Estudiantes y QR" con CRUD a cargo del admin; ahora ese flujo lo ejecuta el apoderado, y se suma el modelo `colegio`.
+- CRUD de `colegio` (admin) + código de registro.
+- Registro de apoderado con código de colegio (Auth.js Credentials extendido al rol `apoderado`).
+- Apoderado agrega/edita/da de baja a sus hijos (`estudiante`).
+- Apoderado genera tokens QR + descarga hoja/PDF imprimible.
+- Etiquetado y revocación de QR por el apoderado.
 
 **Etapa 3 — Escaneo**
 - Página pública `/q/[token]` neutra.
 - Vista con acción para staff autenticado (registrar hallazgo + ubicación).
 
-**Etapa 4 — Hallazgos**
-- Registro, estados, historial, marcar retiro.
+**Etapa 4 — Hallazgos** `[ORDEN CAMBIÓ: se agrega explícitamente la validación de colegio]`
+- Registro — **con validación server-side de `colegio_id` del funcionario contra el `colegio_id` del QR** —, estados, historial, marcar retiro.
 - Catálogo de ubicaciones.
 
 **Etapa 5 — Notificaciones por correo**
 - Interfaz de canal + EmailChannel + dispatcher.
 - Registro `notificacion`, worker/cron de envío, reintentos.
 
-**Etapa 6 — Panel admin y trazabilidad**
-- Listados con filtros, auditoría de notificaciones.
+**Etapa 6 — Panel admin y trazabilidad** `[ORDEN CAMBIÓ + AJUSTADO: admin es global/multi-colegio de plataforma]`
+- Ya no incluye CRUD de estudiantes/QR (se movió a la Etapa 2 vía apoderado).
+- CRUD de colegios + generación de sus códigos de registro.
+- Creación y gestión de cuentas de `funcionario`, de cualquier colegio.
+- Gestión de ubicaciones por colegio.
+- Vista **global** de todos los hallazgos (todos los colegios), con filtros.
+- Auditoría de notificaciones.
 
-**Etapa 7 — Deploy**
+**Etapa 7 — Panel del apoderado: historial** `[NUEVA — antes vivía en "Etapa 8+ (post-MVP)"]`
+- El panel base del apoderado (registro, hijos, QR) ya se construyó en la Etapa 2, como parte del MVP.
+- Acá solo queda la vista de historial de hallazgos dentro de ese panel — el dato ya se viene guardando desde la Etapa 4, esto es solo exponerlo.
+- **A confirmar:** si conviene antes o después de Deploy (Etapa 8); se dejó antes por continuidad de producto, pero es discutible.
+
+**Etapa 8 — Deploy** `[antes era Etapa 7]`
 - VPS Hostinger: MariaDB, Next.js standalone + PM2 + nginx + TLS, backups.
 
-**Etapa 8+ (post-MVP)**
-- Panel apoderado, WhatsApp, PWA push.
+**Etapa 9+ (post-MVP)** `[antes Etapa 8+; se achica: panel apoderado y multi-colegio ya entraron al MVP]`
+- WhatsApp, PWA push.
 
 ---
 
 ## Decisiones a confirmar antes de programar
 
+**Siguen abiertas:**
 1. **[CONFIRMAR]** Escaneo público neutro + acciones sensibles solo con staff autenticado.
-2. **[CONFIRMAR]** Apoderado sin cuenta en MVP (solo recibe correo).
-3. **[CONFIRMAR]** PWA fuera del MVP (la cámara nativa abre la URL).
-4. **[CONFIRMAR]** RUT omitido por minimización, salvo exigencia del colegio.
+2. **[CONFIRMAR]** PWA fuera del MVP (la cámara nativa abre la URL).
+3. **[CONFIRMAR]** RUT omitido por minimización, salvo exigencia del colegio.
+
+**Ya confirmadas (sobrescriben el modelo anterior):**
+4. **[CONFIRMADO]** Apoderado **con cuenta** en el MVP (rol logueable) — se invierte la decisión previa de "apoderado sin cuenta".
+5. **[CONFIRMADO]** Código de registro **por colegio**, no por curso.
+6. **[CONFIRMADO]** Token del QR totalmente opaco, 128 bits, sin prefijo visible; el colegio se resuelve por base de datos (`qr_codigo.colegio_id`), nunca por la URL.
+7. **[CONFIRMADO]** Multi-colegio a nivel de datos, incluido en el MVP (antes estaba fuera de alcance).
+8. **[CONFIRMADO]** El rol `admin` es un administrador **global de plataforma**, único (el dueño/desarrollador del sistema) — no existe un admin por colegio.
+9. **[CONFIRMADO]** El admin crea y gestiona las cuentas de `funcionario` de cada colegio; no hay auto-registro de funcionario.
+10. **[CONFIRMADO]** Las ubicaciones son por colegio (`ubicacion.colegio_id`), configuradas por el admin.
+11. **[CONFIRMADO]** El admin no accede a la PII nominal de estudiantes ni apoderados, pese a su alcance global sobre todos los colegios.
