@@ -6,6 +6,14 @@ import { prisma } from "../lib/db";
 // Mismo costo que usaba el seed anterior.
 const BCRYPT_COST = 12;
 
+function requireEnv(name: string): string {
+  const valor = process.env[name];
+  if (!valor) {
+    throw new Error(`Falta la variable de entorno ${name} para correr el seed.`);
+  }
+  return valor;
+}
+
 async function upsertUsuario(opts: {
   email: string;
   password: string;
@@ -149,8 +157,8 @@ async function ensureUbicacion(opts: { nombre: string; colegioId: number }) {
 async function main() {
   // 1. Admin global — colegioId null, no pertenece a ningún colegio.
   await upsertUsuario({
-    email: "admin@nubiratag.local",
-    password: "admin123",
+    email: requireEnv("SEED_ADMIN_EMAIL"),
+    password: requireEnv("SEED_ADMIN_PASSWORD"),
     nombre: "Admin Plataforma",
     rol: "admin",
     colegioId: null,
@@ -165,8 +173,8 @@ async function main() {
 
   // 4. Funcionario, ligado al colegio.
   await upsertUsuario({
-    email: "funcionario@nubiratag.local",
-    password: "func123",
+    email: requireEnv("SEED_FUNCIONARIO_EMAIL"),
+    password: requireEnv("SEED_FUNCIONARIO_PASSWORD"),
     nombre: "Funcionario Prueba",
     rol: "funcionario",
     colegioId: colegio.id,
@@ -174,8 +182,8 @@ async function main() {
 
   // 5. Apoderado, ligado al colegio.
   const apoderado = await upsertUsuario({
-    email: "apoderado@nubiratag.local",
-    password: "apod123",
+    email: requireEnv("SEED_APODERADO_EMAIL"),
+    password: requireEnv("SEED_APODERADO_PASSWORD"),
     nombre: "Apoderado Prueba",
     rol: "apoderado",
     colegioId: colegio.id,
