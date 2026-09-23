@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { useFormStatus } from "react-dom";
+import { ArrowRight, Loader2 } from "lucide-react";
 
 const NUMEROS_BASICO = [1, 2, 3, 4, 5, 6, 7, 8];
 const NUMEROS_MEDIO = [1, 2, 3, 4];
@@ -57,6 +59,30 @@ function parsearNombre(nombre: string | undefined) {
     apellidoPaterno: partes[1] ?? "",
     apellidoMaterno: partes.slice(2).join(" "),
   };
+}
+
+function BotonSubmit({ submitLabel }: { submitLabel: string }) {
+  const { pending } = useFormStatus();
+
+  return (
+    <button
+      type="submit"
+      disabled={pending}
+      className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#ff914d] px-5 py-2.5 text-sm font-medium text-white transition hover:bg-[#e08044] disabled:opacity-50 sm:w-auto"
+    >
+      {pending ? (
+        <>
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Guardando...
+        </>
+      ) : (
+        <>
+          {submitLabel}
+          <ArrowRight className="h-4 w-4" />
+        </>
+      )}
+    </button>
+  );
 }
 
 export function EstudianteForm({
@@ -218,12 +244,7 @@ export function EstudianteForm({
         </div>
         <input type="hidden" name="curso" value={curso} />
       </div>
-      <button
-        type="submit"
-        className="w-full rounded-xl bg-[#ff914d] px-5 py-3.5 text-base font-medium text-white transition hover:bg-[#e08044] sm:w-auto"
-      >
-        {submitLabel}
-      </button>
+      <BotonSubmit submitLabel={submitLabel} />
     </form>
   );
 }
