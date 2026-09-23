@@ -32,7 +32,7 @@ export default function RegistroPage() {
       <div className="flex h-full w-full flex-col overflow-y-auto overscroll-contain bg-white lg:w-1/2">
         <div className="mx-auto flex w-full max-w-[320px] flex-1 flex-col justify-center px-6 py-12">
           <div className="mb-6 text-center">
-            <span className="text-3xl font-semibold">
+            <span className="text-4xl font-semibold">
               <span className="text-[#2c7bc0]">Nubira</span>
               <span className="text-[#ff914d]">Tag</span>
             </span>
