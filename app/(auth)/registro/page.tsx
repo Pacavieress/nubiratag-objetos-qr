@@ -17,7 +17,7 @@ export default function RegistroPage() {
         <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
         <div className="relative px-12 pb-16">
           <p className="text-3xl font-semibold leading-tight text-white">
-            Cada mochila, cada chaqueta,
+            Cada mochila, cada estuche, cada chaqueta,
             <br />
             siempre de vuelta a casa.
           </p>
