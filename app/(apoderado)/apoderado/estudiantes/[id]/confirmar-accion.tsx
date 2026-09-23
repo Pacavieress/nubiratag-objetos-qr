@@ -3,7 +3,7 @@
 import { useRef } from "react";
 import { ArrowRight } from "lucide-react";
 
-import { BotonSubmit } from "../boton-submit";
+import { BotonSubmit } from "@/components/boton-submit";
 
 export function ConfirmarAccion({
   action,

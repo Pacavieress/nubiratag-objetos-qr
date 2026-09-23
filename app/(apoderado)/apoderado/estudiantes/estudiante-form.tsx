@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { BotonSubmit } from "./boton-submit";
+import { BotonSubmit } from "@/components/boton-submit";
 
 const NUMEROS_BASICO = [1, 2, 3, 4, 5, 6, 7, 8];
 const NUMEROS_MEDIO = [1, 2, 3, 4];

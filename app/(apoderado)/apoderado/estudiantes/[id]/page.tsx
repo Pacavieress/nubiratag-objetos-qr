@@ -5,7 +5,7 @@ import { ArrowLeft, ClipboardList, Minus, Plus, QrCode } from "lucide-react";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { cambiarActivoEstudiante, generarQrCode, revocarQr } from "../actions";
-import { BotonSubmit } from "../boton-submit";
+import { BotonSubmit } from "@/components/boton-submit";
 import { EtiquetaForm } from "./etiqueta-form";
 import { ConfirmarAccion } from "./confirmar-accion";
 

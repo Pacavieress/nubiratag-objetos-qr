@@ -5,6 +5,10 @@ import { NombreForm } from "./nombre-form";
 export default async function UbicacionesPage() {
   // El admin es global y ve ubicaciones de todos los colegios, así que se
   // ordena por colegio primero para que la tabla quede agrupada visualmente.
+  // TODO: cuando exista un admin de colegio real, esta página y el form de
+  // abajo deberían filtrar/fijar por session.user.colegioId en vez de
+  // listar y dejar elegir entre todos los colegios (eso debe quedar
+  // reservado al super admin). Ver admin/colegios/actions.ts#requireSuperAdmin.
   const [ubicaciones, colegios] = await Promise.all([
     prisma.ubicacion.findMany({
       include: { colegio: true },

@@ -20,6 +20,9 @@ export async function crearUbicacion(formData: FormData) {
   // de cualquier colegio, así que acá sí hay que elegirlo explícitamente
   // por formulario — a diferencia de apoderado/funcionario, donde el
   // colegio siempre sale de la sesión.
+  // TODO: cuando exista un admin de colegio real, esta acción debería
+  // fijar colegioId desde session.user.colegioId en vez de confiar en el
+  // valor del formulario. Ver admin/colegios/actions.ts#requireSuperAdmin.
   const colegio = await prisma.colegio.findUnique({
     where: { id: colegioId },
   });

@@ -7,8 +7,11 @@ import { LogOut } from "lucide-react";
 import { cerrarSesion } from "./actions";
 import { NAV_ITEMS } from "./nav-items";
 
-export function Sidebar() {
+export function Sidebar({ esSuperAdmin }: { esSuperAdmin: boolean }) {
   const pathname = usePathname();
+  const items = NAV_ITEMS.filter(
+    (item) => !item.soloSuperAdmin || esSuperAdmin
+  );
 
   return (
     <aside className="hidden md:flex w-64 flex-col bg-white border-r border-gray-100">
@@ -20,7 +23,7 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 px-3 flex flex-col gap-1">
-        {NAV_ITEMS.map((item) => {
+        {items.map((item) => {
           const activo = pathname.startsWith(item.href);
           const Icon = item.icon;
 
