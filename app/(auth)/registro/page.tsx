@@ -1,7 +1,7 @@
 import { LockScroll } from "@/components/lock-scroll";
-import { LoginForm } from "./login-form";
+import { RegistroForm } from "./registro-form";
 
-export default function LoginPage() {
+export default function RegistroPage() {
   return (
     <main className="flex h-dvh w-full overflow-hidden overscroll-none">
       <LockScroll />
@@ -40,14 +40,14 @@ export default function LoginPage() {
 
           <div className="mb-8 text-center">
             <h1 className="text-xl font-semibold text-gray-900">
-              ¡Hola de nuevo!
+              Crea tu cuenta
             </h1>
             <p className="mt-1 text-sm text-gray-500">
-              Ingresa tus datos para continuar.
+              Regístrate para gestionar los objetos de tus hijos.
             </p>
           </div>
 
-          <LoginForm />
+          <RegistroForm />
         </div>
       </div>
     </main>

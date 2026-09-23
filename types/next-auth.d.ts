@@ -8,6 +8,7 @@ declare module "@auth/core/types" {
   interface User {
     rol: RolUsuario;
     colegioId: number | null;
+    remember: boolean;
   }
 
   interface Session {
@@ -24,5 +25,6 @@ declare module "@auth/core/jwt" {
     id: string;
     rol: RolUsuario;
     colegioId: number | null;
+    remember: boolean;
   }
 }

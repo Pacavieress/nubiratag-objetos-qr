@@ -10,19 +10,40 @@ import {
   Loader2,
   Lock,
   Mail,
+  User,
 } from "lucide-react";
 
-import { authenticate } from "./actions";
+import { registrarApoderado } from "./actions";
 
-export function LoginForm() {
+export function RegistroForm() {
   const [errorMessage, formAction, pending] = useActionState(
-    authenticate,
+    registrarApoderado,
     undefined
   );
   const [mostrarPassword, setMostrarPassword] = useState(false);
 
   return (
     <form action={formAction} className="space-y-4">
+      <div className="flex flex-col gap-1.5">
+        <label
+          htmlFor="nombre"
+          className="text-xs font-medium tracking-wide text-gray-500"
+        >
+          NOMBRE COMPLETO
+        </label>
+        <div className="relative">
+          <User className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+          <input
+            id="nombre"
+            name="nombre"
+            type="text"
+            required
+            autoComplete="name"
+            className="w-full rounded-lg border border-gray-300 bg-gray-50 py-3 pl-10 pr-4 text-[16px] transition-colors focus:border-[#54A6D8] focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#54A6D8]"
+          />
+        </div>
+      </div>
+
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor="email"
@@ -57,7 +78,8 @@ export function LoginForm() {
             name="password"
             type={mostrarPassword ? "text" : "password"}
             required
-            autoComplete="current-password"
+            minLength={8}
+            autoComplete="new-password"
             className="w-full rounded-lg border border-gray-300 bg-gray-50 py-3 pl-10 pr-12 text-[16px] transition-colors focus:border-[#54A6D8] focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#54A6D8]"
           />
           <button
@@ -76,16 +98,29 @@ export function LoginForm() {
             )}
           </button>
         </div>
+        <p className="text-xs text-gray-400">Mínimo 8 caracteres.</p>
       </div>
 
-      <label className="flex items-center gap-2 text-sm text-gray-600">
-        <input
-          type="checkbox"
-          name="mantenerSesion"
-          className="h-4 w-4 rounded border-gray-300 text-[#54A6D8] focus:ring-[#54A6D8]"
-        />
-        Mantener sesión
-      </label>
+      <div className="flex flex-col gap-1.5">
+        <label
+          htmlFor="confirmarPassword"
+          className="text-xs font-medium tracking-wide text-gray-500"
+        >
+          CONFIRMAR CONTRASEÑA
+        </label>
+        <div className="relative">
+          <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+          <input
+            id="confirmarPassword"
+            name="confirmarPassword"
+            type={mostrarPassword ? "text" : "password"}
+            required
+            minLength={8}
+            autoComplete="new-password"
+            className="w-full rounded-lg border border-gray-300 bg-gray-50 py-3 pl-10 pr-4 text-[16px] transition-colors focus:border-[#54A6D8] focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#54A6D8]"
+          />
+        </div>
+      </div>
 
       {errorMessage && (
         <div
@@ -105,23 +140,23 @@ export function LoginForm() {
         {pending ? (
           <>
             <Loader2 className="h-4 w-4 animate-spin" />
-            Verificando...
+            Creando cuenta...
           </>
         ) : (
           <>
-            Ingresar
+            Crear cuenta
             <ArrowRight className="h-4 w-4" />
           </>
         )}
       </button>
 
       <p className="text-center text-sm text-gray-500">
-        ¿No tienes cuenta?{" "}
+        ¿Ya tienes cuenta?{" "}
         <Link
-          href="/registro"
+          href="/login"
           className="font-medium text-[#54A6D8] hover:underline"
         >
-          Regístrate
+          Inicia sesión
         </Link>
       </p>
     </form>

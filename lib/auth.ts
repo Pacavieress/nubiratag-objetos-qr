@@ -4,8 +4,16 @@ import bcrypt from "bcryptjs";
 
 import { prisma } from "@/lib/db";
 
+// "Mantener sesión" del login: marcado, el JWT vive 30 días; sin marcar,
+// 1 día de inactividad (se recalcula en cada request mientras la sesión
+// siga activa). session.maxAge es el techo que usa Auth.js para el
+// Max-Age de la cookie — la duración corta real la impone token.exp en
+// el callback jwt(), no la cookie.
+const SESSION_MAX_AGE_LARGO = 30 * 24 * 60 * 60;
+const SESSION_MAX_AGE_CORTO = 24 * 60 * 60;
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  session: { strategy: "jwt" },
+  session: { strategy: "jwt", maxAge: SESSION_MAX_AGE_LARGO },
   pages: {
     signIn: "/login",
   },
@@ -18,6 +26,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       async authorize(credentials) {
         const email = credentials?.email;
         const password = credentials?.password;
+        // "mantenerSesion" no está en el schema declarado arriba (solo
+        // define email/password para la UI default de Auth.js), pero sí
+        // llega en runtime porque login-form.tsx lo manda dentro del mismo
+        // FormData que actions.ts reenvía completo a signIn().
+        const mantenerSesion = (
+          credentials as { mantenerSesion?: string } | undefined
+        )?.mantenerSesion;
 
         if (typeof email !== "string" || typeof password !== "string") {
           return null;
@@ -46,6 +61,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           name: usuario.nombre,
           rol: usuario.rol,
           colegioId: usuario.colegioId,
+          remember: mantenerSesion === "on",
         };
       },
     }),
@@ -56,7 +72,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.id = user.id!;
         token.rol = user.rol;
         token.colegioId = user.colegioId;
+        token.remember = user.remember;
       }
+
+      token.exp =
+        Math.floor(Date.now() / 1000) +
+        (token.remember ? SESSION_MAX_AGE_LARGO : SESSION_MAX_AGE_CORTO);
+
       return token;
     },
     async session({ session, token }) {
