@@ -1,11 +1,19 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Scanner } from "@yudiel/react-qr-scanner";
 import type { IScannerError } from "@yudiel/react-qr-scanner";
 
 import { validarToken } from "./actions";
+
+// Espacia los intentos de detección (default de la librería sin tracker:
+// 500ms) para dar más margen visual al encuadrar. Y exige leer el mismo
+// valor dos veces dentro de esta ventana antes de procesarlo: evita que
+// una lectura fugaz mientras el usuario todavía está encuadrando dispare
+// la navegación al instante.
+const RETRY_DELAY_MS = 800;
+const CONFIRMACION_MS = 1200;
 
 // Mapea el `kind` que entrega la librería a un mensaje entendible. En
 // particular "insecure-context" es el caso esperado mientras se prueba por
@@ -35,6 +43,9 @@ export function EscanerQr() {
   const [validando, setValidando] = useState(false);
   const [mensaje, setMensaje] = useState<string | null>(null);
   const [manualValue, setManualValue] = useState("");
+  const candidatoRef = useRef<{ valor: string; timestamp: number } | null>(
+    null
+  );
 
   async function procesarCandidato(entrada: string) {
     if (!entrada.trim() || validando) return;
@@ -71,13 +82,29 @@ export function EscanerQr() {
           <Scanner
             onScan={(codigos) => {
               const valor = codigos[0]?.rawValue;
-              if (valor) procesarCandidato(valor);
+              if (!valor) return;
+
+              const ahora = Date.now();
+              const candidato = candidatoRef.current;
+
+              if (
+                candidato &&
+                candidato.valor === valor &&
+                ahora - candidato.timestamp <= CONFIRMACION_MS
+              ) {
+                candidatoRef.current = null;
+                procesarCandidato(valor);
+                return;
+              }
+
+              candidatoRef.current = { valor, timestamp: ahora };
             }}
             onError={(error) => setCameraError(mensajeError(error))}
             paused={validando}
             formats={["qr_code"]}
             constraints={{ facingMode: "environment" }}
             components={{ finder: true, torch: true }}
+            retryDelay={RETRY_DELAY_MS}
           />
         )}
       </div>
