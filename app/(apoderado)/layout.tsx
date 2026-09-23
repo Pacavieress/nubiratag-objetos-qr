@@ -19,7 +19,7 @@ export default async function ApoderadoLayout({
       <LockScroll />
       <Sidebar />
       <div className="flex min-h-0 flex-1 flex-col">
-        <Header email={session?.user?.email} />
+        <Header email={session?.user?.email} rol={session?.user?.rol} />
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-6 [-webkit-overflow-scrolling:touch]">{children}</div>
       </div>
       <BottomNav />

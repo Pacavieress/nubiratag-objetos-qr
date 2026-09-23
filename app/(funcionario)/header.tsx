@@ -1,10 +1,23 @@
 "use client";
 
 import { usePathname } from "next/navigation";
+import type { RolUsuario } from "@prisma/client";
 
 import { NAV_ITEMS } from "./nav-items";
 
-export function Header({ email }: { email: string | null | undefined }) {
+const ROL_LABEL: Record<RolUsuario, string> = {
+  admin: "Administrador",
+  funcionario: "Funcionario",
+  apoderado: "Apoderado",
+};
+
+export function Header({
+  email,
+  rol,
+}: {
+  email: string | null | undefined;
+  rol: RolUsuario | null | undefined;
+}) {
   const pathname = usePathname();
   const itemActivo = NAV_ITEMS.find((item) => pathname.startsWith(item.href));
   const mostrarSeccion = itemActivo && itemActivo.href !== "/funcionario/hallazgos";
@@ -23,7 +36,16 @@ export function Header({ email }: { email: string | null | undefined }) {
         )}
       </div>
       {email && (
-        <span className="text-sm font-bold text-gray-600">{email?.split("@")[0]}</span>
+        <div className="text-right">
+          <span className="block text-sm font-bold text-gray-600">
+            {email.split("@")[0]}
+          </span>
+          {rol && (
+            <span className="block text-xs text-gray-400">
+              {ROL_LABEL[rol]}
+            </span>
+          )}
+        </div>
       )}
     </header>
   );

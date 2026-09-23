@@ -1,4 +1,18 @@
-export function Header({ email }: { email: string | null | undefined }) {
+import type { RolUsuario } from "@prisma/client";
+
+const ROL_LABEL: Record<RolUsuario, string> = {
+  admin: "Administrador",
+  funcionario: "Funcionario",
+  apoderado: "Apoderado",
+};
+
+export function Header({
+  email,
+  rol,
+}: {
+  email: string | null | undefined;
+  rol: RolUsuario | null | undefined;
+}) {
   const usuario = email?.split("@")[0];
   const usuarioCapitalizado = usuario
     ? usuario.charAt(0).toUpperCase() + usuario.slice(1)
@@ -11,9 +25,16 @@ export function Header({ email }: { email: string | null | undefined }) {
         <span className="text-[#ff914d]">Tag</span>
       </p>
       {usuarioCapitalizado && (
-        <span className="ml-auto text-sm font-bold text-gray-600">
-          {usuarioCapitalizado}
-        </span>
+        <div className="ml-auto text-right">
+          <span className="block text-sm font-bold text-gray-600">
+            {usuarioCapitalizado}
+          </span>
+          {rol && (
+            <span className="block text-xs text-gray-400">
+              {ROL_LABEL[rol]}
+            </span>
+          )}
+        </div>
       )}
     </header>
   );
