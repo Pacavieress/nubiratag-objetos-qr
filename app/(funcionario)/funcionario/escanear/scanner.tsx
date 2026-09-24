@@ -73,7 +73,7 @@ export function EscanerQr() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="relative w-full max-h-[50dvh] aspect-square touch-none overflow-hidden rounded-xl border border-gray-200">
+      <div className="relative mx-auto w-full max-w-[300px] aspect-square max-h-[50dvh] touch-pan-y overflow-hidden rounded-xl border border-gray-200">
         {cameraError ? (
           <div className="flex h-full flex-col items-center justify-center gap-2 bg-gray-50 p-6 text-center">
             <p className="text-sm text-gray-600">{cameraError}</p>
