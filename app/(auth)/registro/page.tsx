@@ -21,7 +21,7 @@ const ICONOS_FONDO = [
   { Icono: Shirt, top: 2, left: 38, rot: 15, size: 26, color: "#ff914d" },
   { Icono: Glasses, top: 6, left: 68, rot: -8, size: 28, color: "#2c7bc0" },
   { Icono: Pencil, top: 8, left: 92, rot: 33, size: 24, color: "#ff914d" },
-  { Icono: BookOpen, top: 14, left: 20, rot: -20, size: 38, color: "#2c7bc0" },
+  { Icono: BookOpen, top: 12, left: 4, rot: -20, size: 38, color: "#2c7bc0" },
   { Icono: CupSoda, top: 16, left: 50, rot: 10, size: 26, color: "#ff914d" },
   {
     Icono: GraduationCap,
@@ -36,7 +36,7 @@ const ICONOS_FONDO = [
   { Icono: Shirt, top: 22, left: 62, rot: 28, size: 24, color: "#ff914d" },
   { Icono: Glasses, top: 26, left: 88, rot: -35, size: 38, color: "#2c7bc0" },
   { Icono: Pencil, top: 32, left: 15, rot: 12, size: 32, color: "#ff914d" },
-  { Icono: BookOpen, top: 34, left: 45, rot: -10, size: 28, color: "#2c7bc0" },
+  { Icono: BookOpen, top: 34, left: 5, rot: -10, size: 28, color: "#2c7bc0" },
   { Icono: CupSoda, top: 30, left: 72, rot: 24, size: 24, color: "#ff914d" },
   {
     Icono: GraduationCap,
