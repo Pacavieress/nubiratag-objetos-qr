@@ -1,19 +1,18 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Scanner } from "@yudiel/react-qr-scanner";
 import type { IScannerError } from "@yudiel/react-qr-scanner";
 
 import { validarToken } from "./actions";
 
-// Espacia los intentos de detección (default de la librería sin tracker:
-// 500ms) para dar más margen visual al encuadrar. Y exige leer el mismo
-// valor dos veces dentro de esta ventana antes de procesarlo: evita que
-// una lectura fugaz mientras el usuario todavía está encuadrando dispare
-// la navegación al instante.
-const RETRY_DELAY_MS = 800;
-const CONFIRMACION_MS = 1200;
+// Sin doble lectura de confirmación: validarToken ya es la autoridad real
+// (server-side, sin tocar), así que una lectura única errónea solo muestra
+// un mensaje y reactiva el scanner — no hay daño en actuar de inmediato.
+// retryDelay bajo para detectar más rápido en cualquier ángulo/distancia
+// sin exigir un encuadre preciso.
+const RETRY_DELAY_MS = 250;
 
 // Mapea el `kind` que entrega la librería a un mensaje entendible. En
 // particular "insecure-context" es el caso esperado mientras se prueba por
@@ -37,9 +36,8 @@ function mensajeError(error: IScannerError): string {
 }
 
 // Beep propio (Web Audio API, sin archivo de sonido) + vibración, disparado
-// solo cuando la lectura ya se confirmó — reemplaza el beep interno de la
-// librería (sound={false} más abajo), que sonaba en la primera lectura,
-// antes de la confirmación, dando una falsa señal de "listo".
+// en la lectura exitosa — reemplaza el beep interno de la librería
+// (sound={false} más abajo) para tener control total del feedback.
 function reproducirConfirmacion() {
   if (typeof navigator !== "undefined" && navigator.vibrate) {
     navigator.vibrate(200);
@@ -80,20 +78,7 @@ export function EscanerQr() {
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [validando, setValidando] = useState(false);
   const [mensaje, setMensaje] = useState<string | null>(null);
-  const [candidatoDetectado, setCandidatoDetectado] = useState(false);
   const [manualValue, setManualValue] = useState("");
-  const candidatoRef = useRef<{ valor: string; timestamp: number } | null>(
-    null
-  );
-  const ventanaRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Limpia el timeout pendiente si el componente se desmonta (navegación,
-  // etc.) para no llamar setState sobre un componente ya fuera del árbol.
-  useEffect(() => {
-    return () => {
-      if (ventanaRef.current) clearTimeout(ventanaRef.current);
-    };
-  }, []);
 
   async function procesarCandidato(entrada: string) {
     if (!entrada.trim() || validando) return;
@@ -143,50 +128,23 @@ export function EscanerQr() {
               const valor = codigos[0]?.rawValue;
               if (!valor) return;
 
-              const ahora = Date.now();
-              const candidato = candidatoRef.current;
-
-              if (
-                candidato &&
-                candidato.valor === valor &&
-                ahora - candidato.timestamp <= CONFIRMACION_MS
-              ) {
-                candidatoRef.current = null;
-                if (ventanaRef.current) {
-                  clearTimeout(ventanaRef.current);
-                  ventanaRef.current = null;
-                }
-                setCandidatoDetectado(false);
-                reproducirConfirmacion();
-                procesarCandidato(valor);
-                return;
-              }
-
-              candidatoRef.current = { valor, timestamp: ahora };
-              setCandidatoDetectado(true);
-
-              if (ventanaRef.current) clearTimeout(ventanaRef.current);
-              ventanaRef.current = setTimeout(() => {
-                setCandidatoDetectado(false);
-                ventanaRef.current = null;
-              }, CONFIRMACION_MS);
+              reproducirConfirmacion();
+              procesarCandidato(valor);
             }}
             onError={(error) => setCameraError(mensajeError(error))}
             paused={validando}
             formats={["qr_code"]}
-            constraints={{ facingMode: "environment" }}
+            constraints={{
+              facingMode: "environment",
+              width: { ideal: 1920 },
+              height: { ideal: 1080 },
+            }}
             components={{ finder: true, torch: true }}
             retryDelay={RETRY_DELAY_MS}
             sound={false}
           />
         )}
       </div>
-
-      {candidatoDetectado && !mensaje && (
-        <p className="text-sm text-gray-600">
-          Código detectado, mantén el encuadre…
-        </p>
-      )}
 
       {mensaje && (
         <p className="text-sm text-red-600" role="alert">
