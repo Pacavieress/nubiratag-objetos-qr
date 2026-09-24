@@ -36,7 +36,7 @@ export async function authenticate(
   // cookie ya esté disponible en este mismo request.
   const usuario = await prisma.usuario.findUnique({ where: { email } });
 
-  if (usuario?.rol === "admin") {
+  if (usuario?.rol === "admin" || usuario?.rol === "superadmin") {
     redirect("/admin");
   } else if (usuario?.rol === "funcionario") {
     redirect("/funcionario/hallazgos");

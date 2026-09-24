@@ -12,7 +12,7 @@ export default async function Home() {
     redirect("/login");
   }
 
-  if (session.user.rol === "admin") {
+  if (session.user.rol === "admin" || session.user.rol === "superadmin") {
     redirect("/admin");
   } else if (session.user.rol === "funcionario") {
     redirect("/funcionario/hallazgos");

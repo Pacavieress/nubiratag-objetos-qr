@@ -1,23 +1,27 @@
+import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { cambiarActivoUbicacion, crearUbicacion } from "./actions";
 import { NombreForm } from "./nombre-form";
 
 export default async function UbicacionesPage() {
-  // El admin es global y ve ubicaciones de todos los colegios, así que se
-  // ordena por colegio primero para que la tabla quede agrupada visualmente.
-  // TODO: cuando exista un admin de colegio real, esta página y el form de
-  // abajo deberían filtrar/fijar por session.user.colegioId en vez de
-  // listar y dejar elegir entre todos los colegios (eso debe quedar
-  // reservado al super admin). Ver admin/colegios/actions.ts#requireSuperAdmin.
+  const session = await auth();
+  const esSuperAdmin = session?.user?.rol === "superadmin";
+  const colegioIdPropio = session?.user?.colegioId ?? null;
+
+  // El super admin ve/gestiona ubicaciones de todos los colegios; un admin
+  // de colegio solo ve y puede operar las del suyo.
   const [ubicaciones, colegios] = await Promise.all([
     prisma.ubicacion.findMany({
+      where: esSuperAdmin ? undefined : { colegioId: colegioIdPropio! },
       include: { colegio: true },
       orderBy: [{ colegio: { nombre: "asc" } }, { nombre: "asc" }],
     }),
-    prisma.colegio.findMany({
-      where: { activo: true },
-      orderBy: { nombre: "asc" },
-    }),
+    esSuperAdmin
+      ? prisma.colegio.findMany({
+          where: { activo: true },
+          orderBy: { nombre: "asc" },
+        })
+      : Promise.resolve([]),
   ]);
 
   return (
@@ -25,27 +29,29 @@ export default async function UbicacionesPage() {
       <h1 className="text-xl font-semibold">Ubicaciones</h1>
 
       <form action={crearUbicacion} className="flex items-end gap-2">
-        <div className="flex flex-col gap-1">
-          <label htmlFor="colegioId" className="text-sm">
-            Colegio
-          </label>
-          <select
-            id="colegioId"
-            name="colegioId"
-            required
-            defaultValue=""
-            className="border rounded px-3 py-2"
-          >
-            <option value="" disabled>
-              Selecciona un colegio
-            </option>
-            {colegios.map((colegio) => (
-              <option key={colegio.id} value={colegio.id}>
-                {colegio.nombre}
+        {esSuperAdmin && (
+          <div className="flex flex-col gap-1">
+            <label htmlFor="colegioId" className="text-sm">
+              Colegio
+            </label>
+            <select
+              id="colegioId"
+              name="colegioId"
+              required
+              defaultValue=""
+              className="border rounded px-3 py-2"
+            >
+              <option value="" disabled>
+                Selecciona un colegio
               </option>
-            ))}
-          </select>
-        </div>
+              {colegios.map((colegio) => (
+                <option key={colegio.id} value={colegio.id}>
+                  {colegio.nombre}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         <div className="flex flex-col gap-1">
           <label htmlFor="nombre" className="text-sm">
             Nueva ubicación

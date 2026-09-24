@@ -14,6 +14,7 @@ enum RolUsuario {
   admin
   funcionario
   apoderado
+  superadmin
 }
 
 enum EstadoQr {
@@ -60,11 +61,11 @@ model Usuario {
   passwordHash String     @map("password_hash")
   nombre       String
   rol          RolUsuario
-  // colegioId es NULL únicamente para rol = admin (administrador global de
-  // plataforma, no pertenece a ningún colegio). Para funcionario y apoderado
-  // es obligatorio. Prisma/MariaDB no expresan bien un CHECK condicional
-  // rol -> colegioId, así que esta regla se valida a nivel de aplicación
-  // (no acá en el schema).
+  // colegioId es NULL únicamente para rol = superadmin (administrador
+  // global de plataforma, no pertenece a ningún colegio). Para admin,
+  // funcionario y apoderado es obligatorio. Prisma/MariaDB no expresan
+  // bien un CHECK condicional rol -> colegioId, así que esta regla se
+  // valida a nivel de aplicación (no acá en el schema).
   colegioId    Int?       @map("colegio_id")
   activo       Boolean    @default(true)
   createdAt    DateTime   @default(now()) @map("created_at")

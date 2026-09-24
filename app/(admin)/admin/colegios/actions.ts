@@ -11,19 +11,21 @@ import { prisma } from "@/lib/db";
 const BCRYPT_COST = 12;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// Mismo patrón que requireFuncionario en q/[token]/actions.ts. proxy.ts ya
-// exige rol admin para /admin/**, así que acá solo falta distinguir super
-// admin (colegioId: null) de un futuro "admin de colegio" (rol admin con
-// colegioId asignado) — ese admin de colegio no debería poder crear/ver
-// otros colegios ni administradores fuera del suyo.
+// Mismo patrón que requireFuncionario en q/[token]/actions.ts. proxy.ts
+// ya deja pasar admin y superadmin a /admin/**; acá se exige
+// específicamente superadmin — un admin de colegio no debe poder
+// crear/ver otros colegios ni administradores fuera del suyo.
 export async function requireSuperAdmin(): Promise<void> {
   const session = await auth();
 
-  if (!session?.user || session.user.rol !== "admin") {
+  if (
+    !session?.user ||
+    (session.user.rol !== "admin" && session.user.rol !== "superadmin")
+  ) {
     redirect("/login");
   }
 
-  if (session.user.colegioId != null) {
+  if (session.user.rol !== "superadmin") {
     redirect("/admin");
   }
 }

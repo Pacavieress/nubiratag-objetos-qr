@@ -9,26 +9,20 @@ const ROL_LABEL: Record<RolUsuario, string> = {
   admin: "Administrador",
   funcionario: "Funcionario",
   apoderado: "Apoderado",
+  superadmin: "Super Administrador",
 };
 
 export function Header({
   email,
   rol,
-  esSuperAdmin,
 }: {
   email: string | null | undefined;
   rol: RolUsuario | null | undefined;
-  esSuperAdmin: boolean;
 }) {
   const pathname = usePathname();
   const seccion =
     NAV_ITEMS.find((item) => pathname.startsWith(item.href))?.label ?? "Panel";
-  const etiquetaRol =
-    rol === "admin" && esSuperAdmin
-      ? "Super Administrador"
-      : rol
-        ? ROL_LABEL[rol]
-        : null;
+  const etiquetaRol = rol ? ROL_LABEL[rol] : null;
 
   return (
     <header className="flex items-center justify-between border-b border-gray-100 bg-white px-6 py-4">

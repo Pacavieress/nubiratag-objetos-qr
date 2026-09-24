@@ -1,14 +1,15 @@
 import { NextResponse } from "next/server";
+import type { RolUsuario } from "@prisma/client";
 
 import { auth } from "@/lib/auth";
 
-// Prefijo de ruta -> rol exigido. El matcher de abajo garantiza que esta
-// función solo se invoca para paths que empiezan con una de estas tres
-// rutas, así que rolRequerido siempre se encuentra.
-const ROL_POR_PREFIJO: Record<string, "admin" | "apoderado" | "funcionario"> = {
-  "/admin": "admin",
-  "/apoderado": "apoderado",
-  "/funcionario": "funcionario",
+// Prefijo de ruta -> roles permitidos. /admin acepta admin (de colegio)
+// y superadmin; el guard fino entre ambos (ej. requireSuperAdmin en
+// admin/colegios/actions.ts) vive dentro de cada sección, no acá.
+const ROLES_POR_PREFIJO: Record<string, RolUsuario[]> = {
+  "/admin": ["admin", "superadmin"],
+  "/apoderado": ["apoderado"],
+  "/funcionario": ["funcionario"],
 };
 
 // Chequeo optimista: solo lee el JWT de la cookie de sesión, sin ir a la
@@ -20,20 +21,21 @@ export default auth((req) => {
     return NextResponse.redirect(new URL("/login", req.nextUrl));
   }
 
-  const prefijo = Object.keys(ROL_POR_PREFIJO).find((p) =>
+  const prefijo = Object.keys(ROLES_POR_PREFIJO).find((p) =>
     pathname.startsWith(p)
   );
-  const rolRequerido = prefijo ? ROL_POR_PREFIJO[prefijo] : undefined;
+  const rolesPermitidos = prefijo ? ROLES_POR_PREFIJO[prefijo] : undefined;
+  const rolUsuario = req.auth.user?.rol;
 
-  if (rolRequerido && req.auth.user?.rol !== rolRequerido) {
+  if (rolesPermitidos && (!rolUsuario || !rolesPermitidos.includes(rolUsuario))) {
     return NextResponse.redirect(new URL("/login", req.nextUrl));
   }
 
   return NextResponse.next();
 });
 
-// /admin/** solo admin, /apoderado/** solo apoderado, /funcionario/** solo
-// funcionario.
+// /admin/** admin o superadmin, /apoderado/** solo apoderado,
+// /funcionario/** solo funcionario.
 export const config = {
   matcher: ["/admin/:path*", "/apoderado/:path*", "/funcionario/:path*"],
 };

@@ -18,7 +18,7 @@ async function upsertUsuario(opts: {
   email: string;
   password: string;
   nombre: string;
-  rol: "admin" | "funcionario" | "apoderado";
+  rol: "admin" | "funcionario" | "apoderado" | "superadmin";
   colegioId: number | null;
 }) {
   const passwordHash = await bcrypt.hash(opts.password, BCRYPT_COST);
@@ -155,20 +155,31 @@ async function ensureUbicacion(opts: { nombre: string; colegioId: number }) {
 }
 
 async function main() {
-  // 1. Admin global — colegioId null, no pertenece a ningún colegio.
-  await upsertUsuario({
-    email: requireEnv("SEED_ADMIN_EMAIL"),
-    password: requireEnv("SEED_ADMIN_PASSWORD"),
-    nombre: "Admin Plataforma",
-    rol: "admin",
-    colegioId: null,
-  });
-
-  // 2 + 3. Colegio de prueba + su código de registro. El schema no tiene
-  // una entidad separada para el código: es Colegio.codigoRegistro.
+  // 1. Colegio de prueba + su código de registro (antes que el admin:
+  // ahora el admin de colegio necesita colegio.id para existir). El
+  // schema no tiene una entidad separada para el código: es
+  // Colegio.codigoRegistro.
   const colegio = await upsertColegio({
     nombre: "Colegio San Ejemplo",
     codigoRegistro: "SANEJEMPLO2026",
+  });
+
+  // 2. Super admin — colegioId null, no pertenece a ningún colegio.
+  await upsertUsuario({
+    email: requireEnv("SEED_SUPERADMIN_EMAIL"),
+    password: requireEnv("SEED_SUPERADMIN_PASSWORD"),
+    nombre: "Super Admin Plataforma",
+    rol: "superadmin",
+    colegioId: null,
+  });
+
+  // 3. Admin del colegio de prueba — colegioId obligatorio.
+  await upsertUsuario({
+    email: requireEnv("SEED_ADMIN_EMAIL"),
+    password: requireEnv("SEED_ADMIN_PASSWORD"),
+    nombre: "Admin Colegio San Ejemplo",
+    rol: "admin",
+    colegioId: colegio.id,
   });
 
   // 4. Funcionario, ligado al colegio.

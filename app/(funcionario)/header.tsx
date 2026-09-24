@@ -9,6 +9,7 @@ const ROL_LABEL: Record<RolUsuario, string> = {
   admin: "Administrador",
   funcionario: "Funcionario",
   apoderado: "Apoderado",
+  superadmin: "Super Administrador",
 };
 
 export function Header({
