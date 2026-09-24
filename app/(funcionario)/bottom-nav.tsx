@@ -55,7 +55,7 @@ export function BottomNav() {
   if (tecladoAbierto) return null;
 
   return (
-    <nav className="shrink-0 border-t border-gray-100 bg-white pb-[env(safe-area-inset-bottom)] pt-2 lg:hidden">
+    <nav className="shrink-0 border-t border-gray-100 bg-white pb-[env(safe-area-inset-bottom)] pt-2 lg:hidden print:hidden">
       <ul
         className="grid"
         style={{

@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, ClipboardList, Minus, Plus, QrCode } from "lucide-react";
+import { ClipboardList, Minus, Plus, QrCode } from "lucide-react";
 
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { cambiarActivoEstudiante, generarQrCode, revocarQr } from "../actions";
 import { BotonSubmit } from "@/components/boton-submit";
+import { VolverLink } from "@/components/volver-link";
 import { EtiquetaForm } from "./etiqueta-form";
 import { ConfirmarAccion } from "./confirmar-accion";
 
@@ -52,13 +53,7 @@ export default async function EstudianteDetallePage({
   return (
     <main className="flex w-full flex-col gap-4">
       <div className="flex items-center justify-between">
-        <Link
-          href="/apoderado/estudiantes"
-          className="flex items-center gap-1 text-base text-gray-600"
-        >
-          <ArrowLeft className="h-5 w-5" />
-          Volver
-        </Link>
+        <VolverLink href="/apoderado/estudiantes" />
       </div>
 
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-8">

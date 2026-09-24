@@ -1,6 +1,4 @@
-import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
-
+import { VolverLink } from "@/components/volver-link";
 import { crearEstudiante } from "../actions";
 import { EstudianteForm } from "../estudiante-form";
 
@@ -8,13 +6,7 @@ export default function NuevoEstudiantePage() {
   return (
     <main className="flex w-full flex-col gap-4">
       <div className="flex items-center justify-between">
-        <Link
-          href="/apoderado/estudiantes"
-          className="flex items-center gap-1 text-base text-gray-600"
-        >
-          <ArrowLeft className="h-5 w-5" />
-          Volver
-        </Link>
+        <VolverLink href="/apoderado/estudiantes" />
       </div>
 
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">

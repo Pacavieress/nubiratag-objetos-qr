@@ -11,7 +11,7 @@ export function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="hidden lg:flex w-64 flex-col bg-white border-r border-gray-100">
+    <aside className="hidden lg:flex w-64 flex-col bg-white border-r border-gray-100 print:hidden">
       <div className="px-4 py-2">
         <span className="text-2xl font-semibold">
           <span className="text-[#2c7bc0]">Nubira</span>
@@ -30,7 +30,7 @@ export function Sidebar() {
               href={item.href}
               className={`group flex items-center gap-3 px-3 py-2.5 rounded-xl border-l-4 text-[13px] transition ${
                 activo
-                  ? "border-[#54A6D8] bg-[#54A6D8]/10 text-[#54A6D8]"
+                  ? "border-transparent text-[#54A6D8]"
                   : "border-transparent text-gray-600 hover:border-[#54A6D8] hover:bg-[#54A6D8]/5 hover:text-gray-900"
               }`}
             >

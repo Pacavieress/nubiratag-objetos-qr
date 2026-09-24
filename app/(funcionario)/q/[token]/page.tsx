@@ -1,21 +1,14 @@
 import { notFound } from "next/navigation";
-import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
 
 import { prisma } from "@/lib/db";
+import { VolverLink } from "@/components/volver-link";
 import { requireFuncionario } from "./actions";
 import { HallazgoForm } from "./hallazgo-form";
 
 function VolverAEscanear() {
   return (
     <div className="flex items-center justify-between">
-      <Link
-        href="/funcionario/escanear"
-        className="flex items-center gap-1 text-base text-gray-600"
-      >
-        <ArrowLeft className="h-5 w-5" />
-        Volver
-      </Link>
+      <VolverLink href="/funcionario/escanear" />
     </div>
   );
 }
@@ -54,8 +47,10 @@ export default async function ScanPage({
     return (
       <>
         <VolverAEscanear />
-        <main className="mx-auto max-w-md px-4 py-16 text-center">
-          <p>{motivo}</p>
+        <main className="mx-auto flex w-full max-w-md flex-col gap-4">
+          <section className="rounded-2xl border border-gray-100 bg-white p-5 text-center sm:p-6">
+            <p className="text-base text-gray-700">{motivo}</p>
+          </section>
         </main>
       </>
     );
@@ -85,25 +80,27 @@ export default async function ScanPage({
   return (
     <>
       <VolverAEscanear />
-      <main className="mx-auto max-w-md px-4 py-16">
-        {/* Ya no hay escaneo anónimo: solo llega acá un funcionario logueado
-            de este mismo colegio, así que mostrarle a quién pertenece el
-            objeto es información operativa normal, no una fuga de PII. */}
-        <h1 className="text-lg font-semibold">{tituloObjeto}</h1>
-        <p className="mt-1 text-sm text-gray-600">
-          Registrar dónde quedó este objeto.
-        </p>
-
-        {hallazgoAbierto && (
-          <p className="mt-4 text-sm text-amber-700">
-            Aviso: ya hay un hallazgo abierto para este código, registrado el{" "}
-            {hallazgoAbierto.createdAt.toLocaleDateString("es-CL")} en{" "}
-            {hallazgoAbierto.ubicacion.nombre}. Igual puedes registrar uno
-            nuevo si corresponde.
+      <main className="mx-auto flex w-full max-w-md flex-col gap-4">
+        <section className="rounded-2xl border border-gray-100 bg-white p-5 sm:p-6">
+          {/* Ya no hay escaneo anónimo: solo llega acá un funcionario logueado
+              de este mismo colegio, así que mostrarle a quién pertenece el
+              objeto es información operativa normal, no una fuga de PII. */}
+          <h1 className="text-lg font-semibold text-gray-900">{tituloObjeto}</h1>
+          <p className="mt-1 text-sm text-gray-600">
+            Registrar dónde quedó este objeto.
           </p>
-        )}
 
-        <HallazgoForm qrCodigoId={qr.id} ubicaciones={ubicaciones} />
+          {hallazgoAbierto && (
+            <p className="mt-4 text-sm text-amber-700">
+              Aviso: ya hay un hallazgo abierto para este código, registrado el{" "}
+              {hallazgoAbierto.createdAt.toLocaleDateString("es-CL")} en{" "}
+              {hallazgoAbierto.ubicacion.nombre}. Igual puedes registrar uno
+              nuevo si corresponde.
+            </p>
+          )}
+
+          <HallazgoForm qrCodigoId={qr.id} ubicaciones={ubicaciones} />
+        </section>
       </main>
     </>
   );

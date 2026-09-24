@@ -135,7 +135,7 @@ export function EscanerQr() {
           <button
             type="submit"
             disabled={validando || !manualValue.trim()}
-            className="shrink-0 rounded-lg bg-black px-4 py-2.5 text-sm font-medium text-white transition hover:bg-gray-800 disabled:opacity-50"
+            className="shrink-0 rounded-lg bg-[#ff914d] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[#e08044] disabled:opacity-50"
           >
             Buscar
           </button>

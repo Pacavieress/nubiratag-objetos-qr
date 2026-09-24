@@ -13,17 +13,19 @@ export function BotonSubmit({
   label,
   loadingLabel = "Procesando...",
   variante = "naranjo",
+  disabled = false,
 }: {
   label: string;
   loadingLabel?: string;
   variante?: keyof typeof VARIANTES;
+  disabled?: boolean;
 }) {
   const { pending } = useFormStatus();
 
   return (
     <button
       type="submit"
-      disabled={pending}
+      disabled={pending || disabled}
       className={`flex w-full items-center justify-center gap-2 rounded-lg px-5 py-2.5 text-sm font-medium transition disabled:opacity-50 sm:w-auto ${VARIANTES[variante]}`}
     >
       {pending ? (

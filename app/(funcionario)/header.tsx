@@ -20,13 +20,17 @@ export function Header({
   rol: RolUsuario | null | undefined;
 }) {
   const pathname = usePathname();
+  const usuario = email?.split("@")[0];
+  const usuarioCapitalizado = usuario
+    ? usuario.charAt(0).toUpperCase() + usuario.slice(1)
+    : usuario;
   const itemActivo = NAV_ITEMS.find((item) => pathname.startsWith(item.href));
   const mostrarSeccion = itemActivo && itemActivo.href !== "/funcionario/hallazgos";
 
   return (
-    <header className="flex items-center justify-between border-b border-gray-100 bg-white px-6 py-4">
+    <header className="flex items-center justify-between border-b border-gray-100 bg-white px-6 py-3 print:hidden">
       <div>
-        <p className="text-sm lg:hidden">
+        <p className="text-xl font-bold sm:text-2xl lg:hidden">
           <span className="text-[#2c7bc0]">Nubira</span>
           <span className="text-[#ff914d]">Tag</span>
         </p>
@@ -36,10 +40,10 @@ export function Header({
           </h1>
         )}
       </div>
-      {email && (
+      {usuarioCapitalizado && (
         <div className="text-right">
           <span className="block text-sm font-bold text-gray-600">
-            {email.split("@")[0]}
+            {usuarioCapitalizado}
           </span>
           {rol && (
             <span className="block text-xs text-gray-400">

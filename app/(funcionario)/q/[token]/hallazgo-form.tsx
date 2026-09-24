@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from "react";
 
+import { BotonSubmit } from "@/components/boton-submit";
 import { registrarHallazgo, type EstadoRegistro } from "./actions";
 
 export function HallazgoForm({
@@ -12,10 +13,10 @@ export function HallazgoForm({
   ubicaciones: { id: number; nombre: string }[];
 }) {
   const [ubicacionId, setUbicacionId] = useState<number | null>(null);
-  const [estado, formAction, isPending] = useActionState<
-    EstadoRegistro,
-    FormData
-  >(registrarHallazgo.bind(null, qrCodigoId), undefined);
+  const [estado, formAction] = useActionState<EstadoRegistro, FormData>(
+    registrarHallazgo.bind(null, qrCodigoId),
+    undefined
+  );
 
   if (estado?.ok) {
     return (
@@ -41,7 +42,7 @@ export function HallazgoForm({
             onClick={() => setUbicacionId(ubicacion.id)}
             className={`rounded-lg border px-4 py-6 text-base font-medium transition ${
               ubicacionId === ubicacion.id
-                ? "border-black bg-black text-white"
+                ? "border-[#54A6D8] bg-[#54A6D8] text-white"
                 : "border-gray-300 text-gray-900"
             }`}
           >
@@ -56,13 +57,11 @@ export function HallazgoForm({
         </p>
       )}
 
-      <button
-        type="submit"
-        disabled={isPending || ubicacionId === null}
-        className="rounded bg-black px-3 py-3 text-base font-medium text-white disabled:opacity-50"
-      >
-        {isPending ? "Registrando..." : "Confirmar"}
-      </button>
+      <BotonSubmit
+        label="Confirmar"
+        loadingLabel="Registrando..."
+        disabled={ubicacionId === null}
+      />
     </form>
   );
 }

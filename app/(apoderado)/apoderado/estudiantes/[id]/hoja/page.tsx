@@ -1,10 +1,9 @@
 import { notFound } from "next/navigation";
-import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
 
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { generarImagenQr } from "@/lib/qr";
+import { VolverLink } from "@/components/volver-link";
 import { PrintButton } from "./print-button";
 
 export default async function HojaImprimiblePage({
@@ -48,13 +47,7 @@ export default async function HojaImprimiblePage({
   return (
     <main className="w-full">
       <div className="flex items-center justify-between mb-6 print:hidden">
-        <Link
-          href={`/apoderado/estudiantes/${estudianteId}`}
-          className="flex items-center gap-1 text-base text-gray-600"
-        >
-          <ArrowLeft className="h-5 w-5" />
-          Volver
-        </Link>
+        <VolverLink href={`/apoderado/estudiantes/${estudianteId}`} />
         <PrintButton />
       </div>
 
