@@ -5,6 +5,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { enviarCorreoHallazgo } from "@/lib/email";
 
 // Decisión de producto: /q/[token] dejó de ser pública. Solo funcionario
 // logueado puede reportar hallazgos. Se usa redirect() (no notFound())
@@ -34,6 +35,59 @@ export type EstadoRegistro =
   | { ok: false; error: string }
   | undefined;
 
+// Crea la notificacion y deja su estado final (enviada/fallida) resuelto
+// antes de devolver el control — nunca queda "pendiente" colgada. El
+// hallazgo ya se guardó antes de llamar a esto, así que cualquier error
+// de SMTP queda contenido acá adentro, sin afectar la pantalla del
+// funcionario ni el registro ya hecho. Un hallazgo = una notificación,
+// sin deduplicar entre hallazgos del mismo QR.
+async function notificarHallazgo(
+  hallazgoId: number,
+  destinatario: string,
+  datos: {
+    nombreEstudiante: string;
+    etiqueta: string | null;
+    ubicacion: string;
+    colegio: string;
+    fecha: Date;
+    nota: string | null;
+  }
+) {
+  const notificacion = await prisma.notificacion.create({
+    data: {
+      hallazgoId,
+      canal: "email",
+      destinatario,
+      estado: "pendiente",
+      payload: {
+        nombreEstudiante: datos.nombreEstudiante,
+        etiqueta: datos.etiqueta,
+        ubicacion: datos.ubicacion,
+        colegio: datos.colegio,
+        nota: datos.nota,
+      },
+    },
+  });
+
+  try {
+    await enviarCorreoHallazgo({ destinatario, ...datos });
+
+    await prisma.notificacion.update({
+      where: { id: notificacion.id },
+      data: { estado: "enviada", enviadaAt: new Date() },
+    });
+  } catch (error) {
+    console.error(
+      `No se pudo enviar el email de hallazgo ${hallazgoId} (notificacion ${notificacion.id}):`,
+      error
+    );
+    await prisma.notificacion.update({
+      where: { id: notificacion.id },
+      data: { estado: "fallida" },
+    });
+  }
+}
+
 // Esta Server Action es, en los hechos, un endpoint HTTP: que la página
 // solo muestre el formulario al funcionario correcto no alcanza como
 // protección (cualquiera podría invocarla directo). Por eso se revalida
@@ -51,7 +105,10 @@ export async function registrarHallazgo(
   // tanto).
   const qr = await prisma.qrCodigo.findUnique({
     where: { id: qrCodigoId },
-    include: { estudiante: true },
+    include: {
+      estudiante: { include: { apoderado: true } },
+      colegio: true,
+    },
   });
 
   // Regla de oro: el colegio se resuelve desde el QR, nunca desde la URL.
@@ -90,12 +147,21 @@ export async function registrarHallazgo(
 
   // Sin nota: el funcionario solo toca la ubicación, no escribe nada
   // (decisión de producto — un solo toque, o toque + confirmar).
-  await prisma.hallazgo.create({
+  const hallazgo = await prisma.hallazgo.create({
     data: {
       qrCodigoId: qr.id,
       ubicacionId,
       reportadoPorId: funcionario.id,
     },
+  });
+
+  await notificarHallazgo(hallazgo.id, qr.estudiante.apoderado.email, {
+    nombreEstudiante: qr.estudiante.nombre,
+    etiqueta: qr.etiqueta,
+    ubicacion: ubicacion.nombre,
+    colegio: qr.colegio.nombre,
+    fecha: hallazgo.createdAt,
+    nota: hallazgo.nota,
   });
 
   revalidatePath(`/q/${qr.token}`);

@@ -9,7 +9,24 @@ const transporter = nodemailer.createTransport({
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   },
+  // Timeouts acotados: un SMTP colgado no debe bloquear indefinidamente a
+  // quien está esperando la respuesta (afecta a los dos usos de este
+  // transporter compartido, verificación de registro incluida).
+  connectionTimeout: 5000,
+  greetingTimeout: 5000,
+  socketTimeout: 8000,
 });
+
+function escapeHtml(valor: string): string {
+  const mapa: Record<string, string> = {
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  };
+  return valor.replace(/[&<>"']/g, (c) => mapa[c] ?? c);
+}
 
 function plantillaVerificacion(opts: {
   nombre: string;
@@ -78,5 +95,73 @@ export async function enviarCorreoVerificacion(opts: {
     to: opts.destinatario,
     subject: "Confirma tu correo en NubiraTag",
     html: plantillaVerificacion({ nombre: opts.nombre, urlVerificacion }),
+  });
+}
+
+function plantillaHallazgo(opts: {
+  nombreEstudiante: string;
+  etiqueta: string | null;
+  ubicacion: string;
+  colegio: string;
+  fecha: Date;
+  nota: string | null;
+}): string {
+  const objeto = opts.etiqueta ? escapeHtml(opts.etiqueta) : "un objeto";
+  const fechaTexto = opts.fecha.toLocaleString("es-CL", {
+    dateStyle: "long",
+    timeStyle: "short",
+  });
+
+  return `<!doctype html>
+<html lang="es">
+  <body style="margin:0; padding:0; background-color:#f4f5f7; font-family: Arial, Helvetica, sans-serif;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f5f7; padding:32px 0;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background-color:#ffffff; border-radius:16px; overflow:hidden;">
+            <tr>
+              <td style="padding:32px 32px 0 32px; text-align:center;">
+                <span style="font-size:24px; font-weight:600;">
+                  <span style="color:#2c7bc0;">Nubira</span><span style="color:#ff914d;">Tag</span>
+                </span>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px 32px 32px 32px;">
+                <h1 style="margin:0; font-size:20px; color:#111827;">Encontramos un objeto</h1>
+                <p style="margin:12px 0 0 0; font-size:14px; line-height:1.5; color:#4b5563;">
+                  Encontramos ${objeto} de <strong>${escapeHtml(opts.nombreEstudiante)}</strong>
+                  y quedó en <strong>${escapeHtml(opts.ubicacion)}</strong>,
+                  ${escapeHtml(opts.colegio)}, el ${fechaTexto}.
+                </p>
+                ${
+                  opts.nota
+                    ? `<p style="margin:12px 0 0 0; font-size:14px; line-height:1.5; color:#4b5563;">Nota del funcionario: ${escapeHtml(opts.nota)}</p>`
+                    : ""
+                }
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+}
+
+export async function enviarCorreoHallazgo(opts: {
+  destinatario: string;
+  nombreEstudiante: string;
+  etiqueta: string | null;
+  ubicacion: string;
+  colegio: string;
+  fecha: Date;
+  nota: string | null;
+}): Promise<void> {
+  await transporter.sendMail({
+    from: process.env.SMTP_FROM,
+    to: opts.destinatario,
+    subject: `Encontramos un objeto de ${opts.nombreEstudiante}`,
+    html: plantillaHallazgo(opts),
   });
 }
