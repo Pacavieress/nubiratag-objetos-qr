@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Scanner } from "@yudiel/react-qr-scanner";
 import type { IScannerError } from "@yudiel/react-qr-scanner";
 
@@ -36,16 +36,64 @@ function mensajeError(error: IScannerError): string {
   }
 }
 
+// Beep propio (Web Audio API, sin archivo de sonido) + vibración, disparado
+// solo cuando la lectura ya se confirmó — reemplaza el beep interno de la
+// librería (sound={false} más abajo), que sonaba en la primera lectura,
+// antes de la confirmación, dando una falsa señal de "listo".
+function reproducirConfirmacion() {
+  if (typeof navigator !== "undefined" && navigator.vibrate) {
+    navigator.vibrate(200);
+  }
+
+  try {
+    const AudioCtx =
+      window.AudioContext ??
+      (window as unknown as { webkitAudioContext?: typeof AudioContext })
+        .webkitAudioContext;
+    if (!AudioCtx) return;
+
+    const ctx = new AudioCtx();
+    const oscilador = ctx.createOscillator();
+    const ganancia = ctx.createGain();
+
+    oscilador.type = "sine";
+    oscilador.frequency.value = 880;
+    ganancia.gain.setValueAtTime(0.2, ctx.currentTime);
+    ganancia.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+
+    oscilador.connect(ganancia);
+    ganancia.connect(ctx.destination);
+
+    oscilador.start();
+    oscilador.stop(ctx.currentTime + 0.15);
+    oscilador.onended = () => ctx.close();
+  } catch {
+    // Sin beep propio si el navegador bloquea AudioContext (ej. sin
+    // interacción previa) — la vibración y el mensaje visual ya avisan,
+    // no hace falta mostrar error por esto.
+  }
+}
+
 export function EscanerQr() {
   const router = useRouter();
 
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [validando, setValidando] = useState(false);
   const [mensaje, setMensaje] = useState<string | null>(null);
+  const [candidatoDetectado, setCandidatoDetectado] = useState(false);
   const [manualValue, setManualValue] = useState("");
   const candidatoRef = useRef<{ valor: string; timestamp: number } | null>(
     null
   );
+  const ventanaRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Limpia el timeout pendiente si el componente se desmonta (navegación,
+  // etc.) para no llamar setState sobre un componente ya fuera del árbol.
+  useEffect(() => {
+    return () => {
+      if (ventanaRef.current) clearTimeout(ventanaRef.current);
+    };
+  }, []);
 
   async function procesarCandidato(entrada: string) {
     if (!entrada.trim() || validando) return;
@@ -53,17 +101,28 @@ export function EscanerQr() {
     setValidando(true);
     setMensaje(null);
 
-    const resultado = await validarToken(entrada);
+    try {
+      const resultado = await validarToken(entrada);
 
-    if (resultado.ok) {
-      router.push(`/q/${resultado.token}`);
-      return;
+      if (resultado.ok) {
+        router.push(`/q/${resultado.token}`);
+        return;
+      }
+
+      setMensaje(resultado.error);
+    } catch {
+      // validarToken puede lanzar (ej. sesión vencida vía
+      // requireFuncionario) — sin este catch, la promesa rechazada dejaba
+      // validando en true para siempre y el scanner quedaba pausado en
+      // silencio, sin ningún mensaje.
+      setMensaje(
+        "No se pudo validar el código. Si el problema sigue, recarga la página."
+      );
+    } finally {
+      // Reactiva el scanner tras una pausa breve: evita que el mismo QR
+      // inválido dispare onScan en loop inmediato mientras sigue en cuadro.
+      setTimeout(() => setValidando(false), 1500);
     }
-
-    setMensaje(resultado.error);
-    // Reactiva el scanner tras una pausa breve: evita que el mismo QR
-    // inválido dispare onScan en loop inmediato mientras sigue en cuadro.
-    setTimeout(() => setValidando(false), 1500);
   }
 
   function handleManualSubmit(e: React.FormEvent) {
@@ -93,11 +152,24 @@ export function EscanerQr() {
                 ahora - candidato.timestamp <= CONFIRMACION_MS
               ) {
                 candidatoRef.current = null;
+                if (ventanaRef.current) {
+                  clearTimeout(ventanaRef.current);
+                  ventanaRef.current = null;
+                }
+                setCandidatoDetectado(false);
+                reproducirConfirmacion();
                 procesarCandidato(valor);
                 return;
               }
 
               candidatoRef.current = { valor, timestamp: ahora };
+              setCandidatoDetectado(true);
+
+              if (ventanaRef.current) clearTimeout(ventanaRef.current);
+              ventanaRef.current = setTimeout(() => {
+                setCandidatoDetectado(false);
+                ventanaRef.current = null;
+              }, CONFIRMACION_MS);
             }}
             onError={(error) => setCameraError(mensajeError(error))}
             paused={validando}
@@ -105,9 +177,16 @@ export function EscanerQr() {
             constraints={{ facingMode: "environment" }}
             components={{ finder: true, torch: true }}
             retryDelay={RETRY_DELAY_MS}
+            sound={false}
           />
         )}
       </div>
+
+      {candidatoDetectado && !mensaje && (
+        <p className="text-sm text-gray-600">
+          Código detectado, mantén el encuadre…
+        </p>
+      )}
 
       {mensaje && (
         <p className="text-sm text-red-600" role="alert">
