@@ -1,4 +1,4 @@
-import { Building2, MapPin, type LucideIcon } from "lucide-react";
+import { Building2, MapPin, Users, type LucideIcon } from "lucide-react";
 
 export type NavItem = {
   href: string;
@@ -18,11 +18,12 @@ export type NavItem = {
 // vista global multi-colegio para el admin todavía no se reconstruyó.
 export const NAV_ITEMS: NavItem[] = [
   { href: "/admin/ubicaciones", label: "Ubicaciones", icon: MapPin },
+  { href: "/admin/funcionarios", label: "Funcionarios", icon: Users },
   {
     href: "/admin/colegios",
     label: "Colegios",
     icon: Building2,
     soloSuperAdmin: true,
   },
-  // Próximamente: Usuarios/Funcionarios, Hallazgos (vista global).
+  // Próximamente: Hallazgos (vista global).
 ];

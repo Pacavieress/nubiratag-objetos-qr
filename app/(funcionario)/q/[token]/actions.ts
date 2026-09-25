@@ -169,13 +169,17 @@ export async function registrarHallazgo(
   // no se crea otro (antes no había ningún chequeo acá).
   const hallazgoAbierto = await prisma.hallazgo.findFirst({
     where: { qrCodigoId: qr.id, estado: "reportado" },
+    include: { reportante: true, ubicacion: true },
   });
 
   if (hallazgoAbierto) {
+    const fechaTexto = hallazgoAbierto.createdAt.toLocaleString("es-CL", {
+      dateStyle: "long",
+      timeStyle: "short",
+    });
     return {
       ok: false,
-      error:
-        "Ya hay un hallazgo abierto para este objeto. Ve a Entregar objeto con su código de retiro, o ciérralo primero en Hallazgos.",
+      error: `Ya fue reportado por ${hallazgoAbierto.reportante.nombre} el ${fechaTexto} en ${hallazgoAbierto.ubicacion.nombre}. El apoderado ya fue notificado.`,
     };
   }
 

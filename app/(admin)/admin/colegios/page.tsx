@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { requireSuperAdmin } from "./actions";
 import { CrearColegioForm } from "./crear-colegio-form";
 import { AdminColegioForm } from "./admin-colegio-form";
+import { NombreColegioForm } from "./nombre-colegio-form";
 
 export default async function ColegiosPage() {
   await requireSuperAdmin();
@@ -53,6 +54,16 @@ export default async function ColegiosPage() {
               <Plus className="h-5 w-5 shrink-0 text-gray-400 group-open:hidden" />
               <Minus className="hidden h-5 w-5 shrink-0 text-gray-400 group-open:block" />
             </summary>
+
+            <div className="mt-4 border-t border-gray-100 pt-4">
+              <h3 className="text-sm font-medium text-gray-600">
+                Nombre del colegio
+              </h3>
+              <NombreColegioForm
+                colegioId={colegio.id}
+                nombreInicial={colegio.nombre}
+              />
+            </div>
 
             <div className="mt-4 border-t border-gray-100 pt-4">
               <h3 className="text-sm font-medium text-gray-600">

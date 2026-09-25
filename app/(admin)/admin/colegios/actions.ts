@@ -61,6 +61,31 @@ export async function crearColegio(
   revalidatePath("/admin/colegios");
 }
 
+export type EstadoGuardadoColegio = { guardado: boolean } | undefined;
+
+export async function actualizarNombreColegio(
+  colegioId: number,
+  _prevState: EstadoGuardadoColegio,
+  formData: FormData
+): Promise<EstadoGuardadoColegio> {
+  await requireSuperAdmin();
+
+  const nombre = String(formData.get("nombre") ?? "").trim();
+
+  if (!nombre) {
+    return undefined;
+  }
+
+  await prisma.colegio.update({
+    where: { id: colegioId },
+    data: { nombre },
+  });
+
+  revalidatePath("/admin/colegios");
+
+  return { guardado: true };
+}
+
 export async function crearAdminColegio(
   colegioId: number,
   _prevState: string | undefined,
