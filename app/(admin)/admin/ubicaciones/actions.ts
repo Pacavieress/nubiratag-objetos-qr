@@ -43,6 +43,12 @@ async function verificarPropiedadUbicacion(
   }
 }
 
+function parseCoordenada(valor: FormDataEntryValue | null): number | null {
+  if (valor == null || valor === "") return null;
+  const num = Number(valor);
+  return Number.isFinite(num) ? num : null;
+}
+
 export async function crearUbicacion(formData: FormData) {
   const alcance = await resolverAlcanceColegio();
   const nombre = String(formData.get("nombre") ?? "").trim();
@@ -70,7 +76,12 @@ export async function crearUbicacion(formData: FormData) {
     colegioId = alcance.colegioId!;
   }
 
-  await prisma.ubicacion.create({ data: { nombre, colegioId } });
+  const latitud = parseCoordenada(formData.get("latitud"));
+  const longitud = parseCoordenada(formData.get("longitud"));
+
+  await prisma.ubicacion.create({
+    data: { nombre, colegioId, latitud, longitud },
+  });
 
   revalidatePath("/admin/ubicaciones");
 }
@@ -91,9 +102,12 @@ export async function actualizarNombreUbicacion(
     return undefined;
   }
 
+  const latitud = parseCoordenada(formData.get("latitud"));
+  const longitud = parseCoordenada(formData.get("longitud"));
+
   await prisma.ubicacion.update({
     where: { id: ubicacionId },
-    data: { nombre },
+    data: { nombre, latitud, longitud },
   });
 
   revalidatePath("/admin/ubicaciones");

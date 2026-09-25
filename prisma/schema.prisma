@@ -131,6 +131,8 @@ model Ubicacion {
   colegioId Int     @map("colegio_id")
   nombre    String
   activo    Boolean @default(true)
+  latitud   Float?
+  longitud  Float?
 
   colegio   Colegio    @relation(fields: [colegioId], references: [id])
   hallazgos Hallazgo[]

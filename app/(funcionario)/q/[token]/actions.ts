@@ -56,6 +56,8 @@ async function notificarHallazgo(
     fecha: Date;
     nota: string | null;
     codigoRetiro: string;
+    latitud: number | null;
+    longitud: number | null;
   }
 ) {
   await registrarYEnviarNotificacion({
@@ -191,6 +193,8 @@ export async function registrarHallazgo(
     fecha: hallazgo.createdAt,
     nota: hallazgo.nota,
     codigoRetiro: hallazgo.codigoRetiro!,
+    latitud: ubicacion.latitud,
+    longitud: ubicacion.longitud,
   });
 
   revalidatePath(`/q/${qr.token}`);

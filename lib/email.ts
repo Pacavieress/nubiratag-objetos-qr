@@ -98,6 +98,15 @@ export async function enviarCorreoVerificacion(opts: {
   });
 }
 
+function botonMapa(latitud: number | null, longitud: number | null): string {
+  if (latitud == null || longitud == null) return "";
+  return `<div style="margin:16px 0 0 0; text-align:center;">
+    <a href="https://www.google.com/maps?q=${latitud},${longitud}" style="display:inline-block; background-color:#54A6D8; color:#ffffff; text-decoration:none; font-size:13px; font-weight:600; padding:10px 20px; border-radius:8px;">
+      Ver ubicación en el mapa
+    </a>
+  </div>`;
+}
+
 function plantillaHallazgo(opts: {
   nombreEstudiante: string;
   etiqueta: string | null;
@@ -106,6 +115,8 @@ function plantillaHallazgo(opts: {
   fecha: Date;
   nota: string | null;
   codigoRetiro: string;
+  latitud: number | null;
+  longitud: number | null;
 }): string {
   const objeto = opts.etiqueta ? escapeHtml(opts.etiqueta) : "un objeto";
   const fechaTexto = opts.fecha.toLocaleString("es-CL", {
@@ -147,6 +158,7 @@ function plantillaHallazgo(opts: {
                     ? `<p style="margin:12px 0 0 0; font-size:14px; line-height:1.5; color:#4b5563;">Nota del funcionario: ${escapeHtml(opts.nota)}</p>`
                     : ""
                 }
+                ${botonMapa(opts.latitud, opts.longitud)}
               </td>
             </tr>
           </table>
@@ -166,6 +178,8 @@ export async function enviarCorreoHallazgo(opts: {
   fecha: Date;
   nota: string | null;
   codigoRetiro: string;
+  latitud: number | null;
+  longitud: number | null;
 }): Promise<void> {
   await transporter.sendMail({
     from: process.env.SMTP_FROM,
@@ -181,6 +195,8 @@ function plantillaRetiro(opts: {
   ubicacion: string;
   colegio: string;
   fecha: Date;
+  latitud: number | null;
+  longitud: number | null;
 }): string {
   const objeto = opts.etiqueta ? escapeHtml(opts.etiqueta) : "un objeto";
   const fechaTexto = opts.fecha.toLocaleString("es-CL", {
@@ -210,6 +226,7 @@ function plantillaRetiro(opts: {
                   desde <strong>${escapeHtml(opts.ubicacion)}</strong>, ${escapeHtml(opts.colegio)},
                   el ${fechaTexto}.
                 </p>
+                ${botonMapa(opts.latitud, opts.longitud)}
               </td>
             </tr>
           </table>
@@ -227,6 +244,8 @@ export async function enviarCorreoRetiro(opts: {
   ubicacion: string;
   colegio: string;
   fecha: Date;
+  latitud: number | null;
+  longitud: number | null;
 }): Promise<void> {
   await transporter.sendMail({
     from: process.env.SMTP_FROM,

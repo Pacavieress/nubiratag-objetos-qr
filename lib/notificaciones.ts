@@ -49,7 +49,7 @@ type HallazgoParaRetiro = {
     colegio: { nombre: string };
     estudiante: { nombre: string; apoderado: { email: string } };
   };
-  ubicacion: { nombre: string };
+  ubicacion: { nombre: string; latitud: number | null; longitud: number | null };
 };
 
 // Compartido por entregarObjeto (entregar/actions.ts) y marcarRetirado
@@ -67,6 +67,8 @@ export async function notificarRetiro(
     ubicacion: hallazgo.ubicacion.nombre,
     colegio: hallazgo.qrCodigo.colegio.nombre,
     fecha: retiradoAt,
+    latitud: hallazgo.ubicacion.latitud,
+    longitud: hallazgo.ubicacion.longitud,
   };
 
   await registrarYEnviarNotificacion({
