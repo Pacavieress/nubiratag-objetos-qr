@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { cambiarActivoUbicacion } from "./actions";
@@ -25,60 +27,92 @@ export default async function UbicacionesPage() {
       : Promise.resolve([]),
   ]);
 
+  // Agrupa por colegio (ya vienen ordenadas por colegio.nombre, nombre) —
+  // el nombre del colegio pasa a ser encabezado de sección en vez de
+  // repetirse en cada fila.
+  const grupos = new Map<
+    number,
+    { nombre: string; ubicaciones: typeof ubicaciones }
+  >();
+  for (const ubicacion of ubicaciones) {
+    const grupo = grupos.get(ubicacion.colegioId);
+    if (grupo) {
+      grupo.ubicaciones.push(ubicacion);
+    } else {
+      grupos.set(ubicacion.colegioId, {
+        nombre: ubicacion.colegio.nombre,
+        ubicaciones: [ubicacion],
+      });
+    }
+  }
+
   return (
     <main className="flex flex-col gap-8">
       <h1 className="text-xl font-semibold">Ubicaciones</h1>
 
       <CrearUbicacionForm esSuperAdmin={esSuperAdmin} colegios={colegios} />
 
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="text-left border-b">
-            <th className="py-2">Colegio</th>
-            <th className="py-2">Nombre</th>
-            <th className="py-2">Estado</th>
-            <th className="py-2"></th>
-          </tr>
-        </thead>
-        <tbody>
-          {ubicaciones.map((ubicacion) => (
-            <tr key={ubicacion.id} className="border-b align-top">
-              <td className="py-2 text-gray-600">{ubicacion.colegio.nombre}</td>
-              <td className="py-2">
-                <NombreForm
-                  ubicacionId={ubicacion.id}
-                  nombreInicial={ubicacion.nombre}
-                  latitudInicial={ubicacion.latitud}
-                  longitudInicial={ubicacion.longitud}
-                />
-              </td>
-              <td className="py-2">
-                {ubicacion.activo ? "Activa" : "Inactiva"}
-              </td>
-              <td className="py-2">
-                <form
-                  action={cambiarActivoUbicacion.bind(
-                    null,
-                    ubicacion.id,
-                    !ubicacion.activo
-                  )}
-                >
-                  <button type="submit" className="underline text-xs">
-                    {ubicacion.activo ? "Desactivar" : "Reactivar"}
-                  </button>
-                </form>
-              </td>
-            </tr>
-          ))}
-          {ubicaciones.length === 0 && (
-            <tr>
-              <td colSpan={4} className="py-4 text-center text-gray-500">
-                No hay ubicaciones registradas.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+      {[...grupos.values()].map((grupo) => (
+        <section key={grupo.nombre} className="flex flex-col gap-2">
+          <h2 className="text-base font-semibold text-gray-900">
+            {grupo.nombre}
+          </h2>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left border-b">
+                <th className="py-2">Nombre</th>
+                <th className="py-2">Estado</th>
+                <th className="py-2"></th>
+                <th className="py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {grupo.ubicaciones.map((ubicacion) => (
+                <tr key={ubicacion.id} className="border-b align-top">
+                  <td className="py-2">
+                    <NombreForm
+                      ubicacionId={ubicacion.id}
+                      nombreInicial={ubicacion.nombre}
+                      latitudInicial={ubicacion.latitud}
+                      longitudInicial={ubicacion.longitud}
+                    />
+                  </td>
+                  <td className="py-2">
+                    {ubicacion.activo ? "Activa" : "Inactiva"}
+                  </td>
+                  <td className="py-2">
+                    <Link
+                      href={`/admin/ubicaciones/${ubicacion.id}/mapa`}
+                      className="underline text-xs"
+                    >
+                      Mapa
+                    </Link>
+                  </td>
+                  <td className="py-2">
+                    <form
+                      action={cambiarActivoUbicacion.bind(
+                        null,
+                        ubicacion.id,
+                        !ubicacion.activo
+                      )}
+                    >
+                      <button type="submit" className="underline text-xs">
+                        {ubicacion.activo ? "Desactivar" : "Reactivar"}
+                      </button>
+                    </form>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      ))}
+
+      {ubicaciones.length === 0 && (
+        <p className="py-4 text-center text-gray-500">
+          No hay ubicaciones registradas.
+        </p>
+      )}
     </main>
   );
 }

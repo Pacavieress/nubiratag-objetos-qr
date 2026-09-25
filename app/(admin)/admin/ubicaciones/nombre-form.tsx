@@ -1,15 +1,8 @@
 "use client";
 
 import { useActionState } from "react";
-import dynamic from "next/dynamic";
 
 import { actualizarNombreUbicacion } from "./actions";
-
-// ssr:false: Leaflet toca `window` y no puede renderizarse en el servidor.
-const MapaUbicacion = dynamic(
-  () => import("./mapa-ubicacion").then((m) => m.MapaUbicacion),
-  { ssr: false }
-);
 
 export function NombreForm({
   ubicacionId,
@@ -39,12 +32,11 @@ export function NombreForm({
         required
         className="border rounded px-2 py-1"
       />
-      <MapaUbicacion
-        latInicial={latitudInicial}
-        lngInicial={longitudInicial}
-        nombreCampoLat="latitud"
-        nombreCampoLng="longitud"
-      />
+      {/* Las coordenadas ya no se editan acá (se mudan a
+          /admin/ubicaciones/[id]/mapa) — se reenvían sin cambios para no
+          perderlas al guardar solo el nombre. */}
+      <input type="hidden" name="latitud" value={latitudInicial ?? ""} />
+      <input type="hidden" name="longitud" value={longitudInicial ?? ""} />
       <button
         type="submit"
         disabled={isPending}
