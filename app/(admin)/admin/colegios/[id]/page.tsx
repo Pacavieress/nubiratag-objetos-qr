@@ -6,6 +6,7 @@ import { VolverLink } from "@/components/volver-link";
 import { requireSuperAdmin, desactivarAdmin } from "../actions";
 import { EliminarAdminButton } from "../eliminar-admin-button";
 import { NombreColegioForm } from "../nombre-colegio-form";
+import { CodigoColegioForm } from "../codigo-colegio-form";
 import { AdminColegioForm } from "../admin-colegio-form";
 import { cambiarActivoFuncionario } from "../../funcionarios/actions";
 import { CrearFuncionarioForm } from "../../funcionarios/crear-funcionario-form";
@@ -68,6 +69,16 @@ export default async function ColegioDetallePage({
         <NombreColegioForm
           colegioId={colegio.id}
           nombreInicial={colegio.nombre}
+        />
+      </section>
+
+      <section className="rounded-2xl border border-gray-100 bg-white p-5 sm:p-6">
+        <h2 className="text-sm font-medium text-gray-600">
+          Código de registro
+        </h2>
+        <CodigoColegioForm
+          colegioId={colegio.id}
+          codigoInicial={colegio.codigoRegistro}
         />
       </section>
 

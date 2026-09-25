@@ -8,6 +8,7 @@ import { Prisma } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { enviarCorreoBienvenidaAdmin } from "@/lib/email";
+import { generarCodigoColegio } from "@/lib/codigoColegio";
 
 const BCRYPT_COST = 12;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -31,6 +32,38 @@ export async function requireSuperAdmin(): Promise<void> {
   }
 }
 
+const MAX_INTENTOS_CODIGO = 5;
+
+/** Crea un colegio con un codigoRegistro único, reintentando ante una
+ * colisión — mismo patrón que crearHallazgoConCodigoUnico en
+ * q/[token]/actions.ts y crearQrConTokenUnico en
+ * apoderado/estudiantes/actions.ts. */
+async function crearColegioConCodigoUnico(nombre: string) {
+  for (let intento = 1; intento <= MAX_INTENTOS_CODIGO; intento++) {
+    const codigoRegistro = generarCodigoColegio();
+    try {
+      return await prisma.colegio.create({ data: { nombre, codigoRegistro } });
+    } catch (error) {
+      const esColisionDeCodigo =
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002" &&
+        (error.meta?.target as string[] | undefined)?.includes(
+          "codigo_registro"
+        );
+
+      if (!esColisionDeCodigo) {
+        throw error;
+      }
+      // Colisión (1 en un millón): reintenta con otro código en vez de
+      // propagar el error crudo.
+    }
+  }
+
+  throw new Error(
+    `No se pudo generar un código de registro único tras ${MAX_INTENTOS_CODIGO} intentos.`
+  );
+}
+
 export async function crearColegio(
   _prevState: string | undefined,
   formData: FormData
@@ -38,26 +71,12 @@ export async function crearColegio(
   await requireSuperAdmin();
 
   const nombre = String(formData.get("nombre") ?? "").trim();
-  const codigoRegistro = String(formData.get("codigoRegistro") ?? "").trim();
 
   if (!nombre) {
     return "El nombre del colegio es obligatorio.";
   }
-  if (!codigoRegistro) {
-    return "El código de registro es obligatorio.";
-  }
 
-  try {
-    await prisma.colegio.create({ data: { nombre, codigoRegistro } });
-  } catch (error) {
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2002"
-    ) {
-      return "Ese código de registro ya está en uso.";
-    }
-    throw error;
-  }
+  await crearColegioConCodigoUnico(nombre);
 
   revalidatePath("/admin/colegios");
 }
@@ -208,4 +227,43 @@ export async function eliminarAdmin(usuarioId: number) {
   await prisma.usuario.delete({ where: { id: usuarioId } });
 
   revalidatePath(`/admin/colegios/${usuario.colegioId!}`);
+}
+
+export type EstadoCodigoRegistro =
+  | { guardado: true }
+  | { guardado: false; error: string }
+  | undefined;
+
+export async function actualizarCodigoRegistro(
+  colegioId: number,
+  _prevState: EstadoCodigoRegistro,
+  formData: FormData
+): Promise<EstadoCodigoRegistro> {
+  await requireSuperAdmin();
+
+  const codigoRegistro = String(formData.get("codigoRegistro") ?? "").trim();
+
+  if (!codigoRegistro) {
+    return { guardado: false, error: "El código no puede quedar vacío." };
+  }
+
+  try {
+    await prisma.colegio.update({
+      where: { id: colegioId },
+      data: { codigoRegistro },
+    });
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      return { guardado: false, error: "Ese código ya está en uso." };
+    }
+    throw error;
+  }
+
+  revalidatePath("/admin/colegios");
+  revalidatePath(`/admin/colegios/${colegioId}`);
+
+  return { guardado: true };
 }

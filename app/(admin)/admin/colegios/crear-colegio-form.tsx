@@ -26,21 +26,6 @@ export function CrearColegioForm() {
           className="rounded-lg border border-gray-300 px-4 py-3 text-base focus:border-[#54A6D8] focus:outline-none focus:ring-2 focus:ring-[#54A6D8]"
         />
       </div>
-      <div className="flex flex-1 flex-col gap-1.5">
-        <label
-          htmlFor="codigoRegistro"
-          className="text-sm font-medium text-gray-600"
-        >
-          Código de registro
-        </label>
-        <input
-          id="codigoRegistro"
-          name="codigoRegistro"
-          required
-          placeholder="p. ej. SANEJEMPLO2026"
-          className="rounded-lg border border-gray-300 px-4 py-3 text-base focus:border-[#54A6D8] focus:outline-none focus:ring-2 focus:ring-[#54A6D8]"
-        />
-      </div>
       <BotonSubmit label="Crear colegio" loadingLabel="Creando..." />
 
       {error && (
