@@ -3,9 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { notFound, redirect } from "next/navigation";
 
+import { Prisma } from "@prisma/client";
+
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { enviarCorreoHallazgo } from "@/lib/email";
+import { registrarYEnviarNotificacion } from "@/lib/notificaciones";
+import { generarCodigoRetiro } from "@/lib/codigoRetiro";
 
 // Decisión de producto: /q/[token] dejó de ser pública. Solo funcionario
 // logueado puede reportar hallazgos. Se usa redirect() (no notFound())
@@ -51,41 +55,53 @@ async function notificarHallazgo(
     colegio: string;
     fecha: Date;
     nota: string | null;
+    codigoRetiro: string;
   }
 ) {
-  const notificacion = await prisma.notificacion.create({
-    data: {
-      hallazgoId,
-      canal: "email",
-      destinatario,
-      estado: "pendiente",
-      payload: {
-        nombreEstudiante: datos.nombreEstudiante,
-        etiqueta: datos.etiqueta,
-        ubicacion: datos.ubicacion,
-        colegio: datos.colegio,
-        nota: datos.nota,
-      },
-    },
+  await registrarYEnviarNotificacion({
+    hallazgoId,
+    canal: "email",
+    destinatario,
+    payload: { ...datos },
+    enviar: () => enviarCorreoHallazgo({ destinatario, ...datos }),
   });
+}
 
-  try {
-    await enviarCorreoHallazgo({ destinatario, ...datos });
+const MAX_INTENTOS_CODIGO = 5;
 
-    await prisma.notificacion.update({
-      where: { id: notificacion.id },
-      data: { estado: "enviada", enviadaAt: new Date() },
-    });
-  } catch (error) {
-    console.error(
-      `No se pudo enviar el email de hallazgo ${hallazgoId} (notificacion ${notificacion.id}):`,
-      error
-    );
-    await prisma.notificacion.update({
-      where: { id: notificacion.id },
-      data: { estado: "fallida" },
-    });
+/** Crea un hallazgo con un codigoRetiro único, reintentando ante una
+ * colisión (prácticamente imposible con 887M combinaciones) — mismo
+ * patrón que crearQrConTokenUnico en apoderado/estudiantes/actions.ts. */
+async function crearHallazgoConCodigoUnico(opts: {
+  qrCodigoId: number;
+  ubicacionId: number;
+  reportadoPorId: number;
+}) {
+  for (let intento = 1; intento <= MAX_INTENTOS_CODIGO; intento++) {
+    const codigoRetiro = generarCodigoRetiro();
+    try {
+      return await prisma.hallazgo.create({
+        data: { ...opts, codigoRetiro },
+      });
+    } catch (error) {
+      const esColisionDeCodigo =
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002" &&
+        (error.meta?.target as string[] | undefined)?.includes(
+          "codigo_retiro"
+        );
+
+      if (!esColisionDeCodigo) {
+        throw error;
+      }
+      // Colisión de código (astronómicamente improbable): reintenta con
+      // un código nuevo en vez de propagar el error crudo.
+    }
   }
+
+  throw new Error(
+    `No se pudo generar un código de retiro único tras ${MAX_INTENTOS_CODIGO} intentos.`
+  );
 }
 
 // Esta Server Action es, en los hechos, un endpoint HTTP: que la página
@@ -147,12 +163,10 @@ export async function registrarHallazgo(
 
   // Sin nota: el funcionario solo toca la ubicación, no escribe nada
   // (decisión de producto — un solo toque, o toque + confirmar).
-  const hallazgo = await prisma.hallazgo.create({
-    data: {
-      qrCodigoId: qr.id,
-      ubicacionId,
-      reportadoPorId: funcionario.id,
-    },
+  const hallazgo = await crearHallazgoConCodigoUnico({
+    qrCodigoId: qr.id,
+    ubicacionId,
+    reportadoPorId: funcionario.id,
   });
 
   await notificarHallazgo(hallazgo.id, qr.estudiante.apoderado.email, {
@@ -162,6 +176,7 @@ export async function registrarHallazgo(
     colegio: qr.colegio.nombre,
     fecha: hallazgo.createdAt,
     nota: hallazgo.nota,
+    codigoRetiro: hallazgo.codigoRetiro!,
   });
 
   revalidatePath(`/q/${qr.token}`);

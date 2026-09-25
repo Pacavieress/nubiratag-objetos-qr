@@ -2,6 +2,7 @@
 
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { extraerToken } from "@/lib/qr";
 
 // Mismo patrón que en hallazgos/actions.ts y q/[token]/actions.ts: esta
 // página también es, en los hechos, un endpoint que cualquiera podría
@@ -22,21 +23,6 @@ async function requireFuncionario(): Promise<{
   }
 
   return { id: Number(session.user.id), colegioId: session.user.colegioId };
-}
-
-// El QR codifica una URL completa (ver lib/qr.ts), no el token pelado. El
-// ingreso manual, en cambio, puede traer el token solo. Se acepta cualquiera
-// de las dos formas.
-function extraerToken(entrada: string): string {
-  const valor = entrada.trim();
-
-  try {
-    const url = new URL(valor);
-    const segmentos = url.pathname.split("/").filter(Boolean);
-    return segmentos[segmentos.length - 1] ?? valor;
-  } catch {
-    return valor;
-  }
 }
 
 export type EstadoValidacion =

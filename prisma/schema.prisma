@@ -84,6 +84,7 @@ model Usuario {
 
   hijos               Estudiante[] @relation("ApoderadoDeEstudiante")
   hallazgosReportados Hallazgo[]   @relation("HallazgoReportadoPor")
+  hallazgosRetirados  Hallazgo[]   @relation("HallazgoRetiradoPor")
 
   @@index([colegioId])
   @@map("usuario")
@@ -148,15 +149,32 @@ model Hallazgo {
   createdAt      DateTime       @default(now()) @map("created_at")
   updatedAt      DateTime       @updatedAt @map("updated_at")
 
-  qrCodigo   QrCodigo  @relation(fields: [qrCodigoId], references: [id])
-  ubicacion  Ubicacion @relation(fields: [ubicacionId], references: [id])
-  reportante Usuario   @relation("HallazgoReportadoPor", fields: [reportadoPorId], references: [id])
+  // Retiro con código (capa 1): código corto entregado al apoderado por
+  // email, sin nombres visibles para el funcionario en ningún paso hasta
+  // la entrega. Único a nivel global (no solo "entre abiertos"): mismo
+  // criterio que QrCodigo.token — con 6 caracteres sobre un alfabeto sin
+  // ambigüedades el espacio es enorme, y así MySQL puede expresarlo como
+  // constraint dura sin necesitar un índice parcial (que no soporta
+  // bien). La búsqueda por código igual filtra por estado = reportado,
+  // así que nunca hay ambigüedad real aunque un código viejo ya retirado
+  // coincida por casualidad con uno nuevo (astronómicamente improbable
+  // de todas formas). Hallazgos creados antes de este campo quedan con
+  // codigoRetiro: null y siguen resolviéndose solo por "Marcar retirado".
+  codigoRetiro  String?   @unique @map("codigo_retiro")
+  retiradoAt    DateTime? @map("retirado_at")
+  retiradoPorId Int?      @map("retirado_por")
+
+  qrCodigo    QrCodigo  @relation(fields: [qrCodigoId], references: [id])
+  ubicacion   Ubicacion @relation(fields: [ubicacionId], references: [id])
+  reportante  Usuario   @relation("HallazgoReportadoPor", fields: [reportadoPorId], references: [id])
+  retiradoPor Usuario?  @relation("HallazgoRetiradoPor", fields: [retiradoPorId], references: [id])
 
   notificaciones Notificacion[]
 
   @@index([qrCodigoId])
   @@index([ubicacionId])
   @@index([reportadoPorId])
+  @@index([retiradoPorId])
   @@map("hallazgo")
 }
 
