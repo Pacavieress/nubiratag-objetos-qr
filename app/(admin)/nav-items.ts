@@ -17,13 +17,13 @@ export type NavItem = {
 // abiertos por colegio es del funcionario (/funcionario/hallazgos); la
 // vista global multi-colegio para el admin todavía no se reconstruyó.
 export const NAV_ITEMS: NavItem[] = [
-  { href: "/admin/ubicaciones", label: "Ubicaciones", icon: MapPin },
-  { href: "/admin/funcionarios", label: "Funcionarios", icon: Users },
   {
     href: "/admin/colegios",
     label: "Colegios",
     icon: Building2,
     soloSuperAdmin: true,
   },
+  { href: "/admin/funcionarios", label: "Funcionarios", icon: Users },
+  { href: "/admin/ubicaciones", label: "Ubicaciones", icon: MapPin },
   // Próximamente: Hallazgos (vista global).
 ];
