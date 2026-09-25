@@ -98,6 +98,74 @@ export async function enviarCorreoVerificacion(opts: {
   });
 }
 
+function plantillaBienvenidaAdmin(opts: {
+  nombreAdmin: string;
+  nombreColegio: string;
+  urlLogin: string;
+}): string {
+  return `<!doctype html>
+<html lang="es">
+  <body style="margin:0; padding:0; background-color:#f4f5f7; font-family: Arial, Helvetica, sans-serif;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f5f7; padding:32px 0;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background-color:#ffffff; border-radius:16px; overflow:hidden;">
+            <tr>
+              <td style="padding:32px 32px 0 32px; text-align:center;">
+                <span style="font-size:24px; font-weight:600;">
+                  <span style="color:#2c7bc0;">Nubira</span><span style="color:#ff914d;">Tag</span>
+                </span>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px 32px 8px 32px;">
+                <h1 style="margin:0; font-size:20px; color:#111827;">¡Hola, ${escapeHtml(opts.nombreAdmin)}!</h1>
+                <p style="margin:12px 0 0 0; font-size:14px; line-height:1.5; color:#4b5563;">
+                  Ya eres administrador de NubiraTag en <strong>${escapeHtml(opts.nombreColegio)}</strong>.
+                </p>
+                <p style="margin:12px 0 0 0; font-size:14px; line-height:1.5; color:#4b5563;">
+                  Tu función principal es agregar o quitar a los funcionarios
+                  encargados de escanear los objetos encontrados en el colegio.
+                </p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px 32px;" align="center">
+                <a href="${opts.urlLogin}" style="display:inline-block; background-color:#54A6D8; color:#ffffff; text-decoration:none; font-size:14px; font-weight:600; padding:12px 28px; border-radius:8px;">
+                  Iniciar sesión
+                </a>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+}
+
+export async function enviarCorreoBienvenidaAdmin(opts: {
+  destinatario: string;
+  nombreAdmin: string;
+  nombreColegio: string;
+}): Promise<void> {
+  const urlLogin = new URL(
+    "/login",
+    process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3001"
+  ).toString();
+
+  await transporter.sendMail({
+    from: process.env.SMTP_FROM,
+    to: opts.destinatario,
+    subject: "Ya eres administrador en NubiraTag",
+    html: plantillaBienvenidaAdmin({
+      nombreAdmin: opts.nombreAdmin,
+      nombreColegio: opts.nombreColegio,
+      urlLogin,
+    }),
+  });
+}
+
 function botonMapa(latitud: number | null, longitud: number | null): string {
   if (latitud == null || longitud == null) return "";
   return `<div style="margin:16px 0 0 0; text-align:center;">

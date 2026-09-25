@@ -7,6 +7,7 @@ import { Prisma } from "@prisma/client";
 
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { enviarCorreoBienvenidaAdmin } from "@/lib/email";
 
 const BCRYPT_COST = 12;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -135,6 +136,24 @@ export async function crearAdminColegio(
       return "Ese correo ya está registrado.";
     }
     throw error;
+  }
+
+  // No se reutiliza registrarYEnviarNotificacion/lib/notificaciones.ts: ese
+  // helper persiste el intento en la tabla notificacion, cuya FK
+  // hallazgoId es obligatoria (ver schema.prisma) — este correo no está
+  // atado a ningún hallazgo. Try/catch simple: el fallo de SMTP nunca debe
+  // impedir que el admin quede creado.
+  try {
+    await enviarCorreoBienvenidaAdmin({
+      destinatario: email,
+      nombreAdmin: nombre,
+      nombreColegio: colegio.nombre,
+    });
+  } catch (error) {
+    console.error(
+      `No se pudo enviar el correo de bienvenida al admin ${email}:`,
+      error
+    );
   }
 
   revalidatePath("/admin/colegios");
