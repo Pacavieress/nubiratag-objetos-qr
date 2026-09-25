@@ -1,7 +1,13 @@
 "use client";
 
-import { useState } from "react";
-import { MapContainer, Marker, TileLayer, useMapEvents } from "react-leaflet";
+import { useEffect, useRef, useState } from "react";
+import {
+  MapContainer,
+  Marker,
+  TileLayer,
+  useMap,
+  useMapEvents,
+} from "react-leaflet";
 import L from "leaflet";
 import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
 import markerIcon from "leaflet/dist/images/marker-icon.png";
@@ -39,6 +45,33 @@ function ClickParaMarcar({
   return null;
 }
 
+// MapContainer solo aplica sus props center/zoom en el montaje inicial —
+// si centroDefecto cambia después (p. ej. se acaba de geocodificar una
+// dirección nueva), hay que mover la cámara a mano con flyTo. No toca el
+// estado del marcador (punto), así que uno ya puesto por el usuario no se
+// pierde ni se resetea, solo se mueve la vista.
+function CentradoAutomatico({
+  centroDefecto,
+}: {
+  centroDefecto?: [number, number];
+}) {
+  const map = useMap();
+  const esPrimerRender = useRef(true);
+
+  useEffect(() => {
+    if (esPrimerRender.current) {
+      // El center/zoom inicial de MapContainer ya deja la vista correcta
+      // al montar — evita un flyTo redundante justo después.
+      esPrimerRender.current = false;
+      return;
+    }
+    if (!centroDefecto) return;
+    map.flyTo(centroDefecto, ZOOM_PUNTO, { duration: 1.5 });
+  }, [centroDefecto, map]);
+
+  return null;
+}
+
 export function MapaUbicacion({
   latInicial,
   lngInicial,
@@ -72,6 +105,7 @@ export function MapaUbicacion({
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
+          <CentradoAutomatico centroDefecto={centroDefecto} />
           <ClickParaMarcar onClick={(lat, lng) => setPunto([lat, lng])} />
           {punto && <Marker position={punto} />}
         </MapContainer>
