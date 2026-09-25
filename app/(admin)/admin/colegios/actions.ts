@@ -115,27 +115,45 @@ export async function crearAdminColegio(
 
   const passwordHash = await bcrypt.hash(password, BCRYPT_COST);
 
-  try {
-    await prisma.usuario.create({
-      data: {
-        email,
-        passwordHash,
-        nombre,
-        rol: "admin",
-        colegioId,
-        activo: true,
-        // Lo crea directo un super admin, no pasa por auto-registro.
-        emailVerificado: true,
-      },
-    });
-  } catch (error) {
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2002"
-    ) {
+  // Un admin desactivado con este correo se reactiva sobre la misma fila
+  // (nombre/contraseña/colegio se actualizan a los recién ingresados) en
+  // vez de rechazar por correo duplicado — cubre reasignar un
+  // ex-administrador a otro colegio. Cualquier otro dueño del correo
+  // (activo, o de otro rol) sigue rechazándose igual que antes.
+  const existente = await prisma.usuario.findUnique({ where: { email } });
+
+  if (existente) {
+    if (existente.rol !== "admin" || existente.activo) {
       return "Ese correo ya está registrado.";
     }
-    throw error;
+
+    await prisma.usuario.update({
+      where: { id: existente.id },
+      data: { nombre, passwordHash, colegioId, activo: true },
+    });
+  } else {
+    try {
+      await prisma.usuario.create({
+        data: {
+          email,
+          passwordHash,
+          nombre,
+          rol: "admin",
+          colegioId,
+          activo: true,
+          // Lo crea directo un super admin, no pasa por auto-registro.
+          emailVerificado: true,
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        return "Ese correo ya está registrado.";
+      }
+      throw error;
+    }
   }
 
   // No se reutiliza registrarYEnviarNotificacion/lib/notificaciones.ts: ese
@@ -157,6 +175,7 @@ export async function crearAdminColegio(
   }
 
   revalidatePath("/admin/colegios");
+  revalidatePath(`/admin/colegios/${colegioId}`);
 }
 
 export async function desactivarAdmin(usuarioId: number, activo: boolean) {
@@ -171,6 +190,22 @@ export async function desactivarAdmin(usuarioId: number, activo: boolean) {
   }
 
   await prisma.usuario.update({ where: { id: usuarioId }, data: { activo } });
+
+  revalidatePath(`/admin/colegios/${usuario.colegioId!}`);
+}
+
+export async function eliminarAdmin(usuarioId: number) {
+  await requireSuperAdmin();
+
+  const usuario = await prisma.usuario.findUnique({ where: { id: usuarioId } });
+
+  // Mismo criterio que desactivarAdmin: evita operar sobre una cuenta que
+  // no sea admin, aunque llegue un id ajeno a mano.
+  if (!usuario || usuario.rol !== "admin") {
+    throw new Error("No autorizado.");
+  }
+
+  await prisma.usuario.delete({ where: { id: usuarioId } });
 
   revalidatePath(`/admin/colegios/${usuario.colegioId!}`);
 }

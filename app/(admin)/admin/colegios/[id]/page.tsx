@@ -4,6 +4,7 @@ import { Minus, Plus } from "lucide-react";
 import { prisma } from "@/lib/db";
 import { VolverLink } from "@/components/volver-link";
 import { requireSuperAdmin, desactivarAdmin } from "../actions";
+import { EliminarAdminButton } from "../eliminar-admin-button";
 import { NombreColegioForm } from "../nombre-colegio-form";
 import { AdminColegioForm } from "../admin-colegio-form";
 import { cambiarActivoFuncionario } from "../../funcionarios/actions";
@@ -113,6 +114,7 @@ export default async function ColegioDetallePage({
                     {admin.activo ? "Desactivar" : "Reactivar"}
                   </button>
                 </form>
+                <EliminarAdminButton usuarioId={admin.id} />
               </div>
             </div>
           ))}
