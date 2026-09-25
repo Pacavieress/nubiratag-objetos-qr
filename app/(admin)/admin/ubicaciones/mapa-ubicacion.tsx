@@ -44,22 +44,28 @@ export function MapaUbicacion({
   lngInicial,
   nombreCampoLat,
   nombreCampoLng,
+  centroDefecto,
 }: {
   latInicial: number | null;
   lngInicial: number | null;
   nombreCampoLat: string;
   nombreCampoLng: string;
+  // Centro a usar mientras no hay coordenadas propias — p. ej. la
+  // dirección geocodificada del colegio, en vez de Chile completo.
+  centroDefecto?: [number, number];
 }) {
   const [punto, setPunto] = useState<[number, number] | null>(
     latInicial != null && lngInicial != null ? [latInicial, lngInicial] : null
   );
+  const centro = punto ?? centroDefecto ?? CENTRO_CHILE;
+  const zoom = punto || centroDefecto ? ZOOM_PUNTO : ZOOM_CHILE;
 
   return (
     <div className="flex flex-col gap-1">
       <div className="h-48 w-full max-w-xs overflow-hidden rounded border">
         <MapContainer
-          center={punto ?? CENTRO_CHILE}
-          zoom={punto ? ZOOM_PUNTO : ZOOM_CHILE}
+          center={centro}
+          zoom={zoom}
           style={{ height: "100%", width: "100%" }}
         >
           <TileLayer

@@ -44,6 +44,7 @@ model Colegio {
   id             Int      @id @default(autoincrement())
   nombre         String
   codigoRegistro String   @unique @map("codigo_registro")
+  direccion      String?
   activo         Boolean  @default(true)
   createdAt      DateTime @default(now()) @map("created_at")
 

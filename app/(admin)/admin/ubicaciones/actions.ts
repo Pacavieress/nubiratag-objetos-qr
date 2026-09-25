@@ -28,19 +28,105 @@ async function resolverAlcanceColegio(): Promise<{
   };
 }
 
+// Ahora siempre busca la fila (antes se saltaba el fetch para
+// superadmin): además de verificar, el caller necesita el colegioId para
+// revalidar /admin/colegios/[id]/mapa.
 async function verificarPropiedadUbicacion(
   ubicacionId: number,
   alcance: { esSuperAdmin: boolean; colegioId: number | null }
 ) {
-  if (alcance.esSuperAdmin) return;
-
   const ubicacion = await prisma.ubicacion.findUnique({
     where: { id: ubicacionId },
   });
 
-  if (!ubicacion || ubicacion.colegioId !== alcance.colegioId) {
+  if (!ubicacion) {
     throw new Error("No autorizado.");
   }
+  if (!alcance.esSuperAdmin && ubicacion.colegioId !== alcance.colegioId) {
+    throw new Error("No autorizado.");
+  }
+
+  return ubicacion;
+}
+
+async function verificarPropiedadColegio(
+  colegioId: number,
+  alcance: { esSuperAdmin: boolean; colegioId: number | null }
+) {
+  if (alcance.esSuperAdmin) return;
+
+  if (colegioId !== alcance.colegioId) {
+    throw new Error("No autorizado.");
+  }
+}
+
+// Nominatim (OpenStreetMap) exige un User-Agent que identifique la app —
+// no acepta el default de fetch, y no hay API key. Capa 1: si falla (red,
+// rate limit, dirección no encontrada) no hay centro automático, pero
+// nunca bloquea guardar la dirección.
+export async function geocodificarDireccion(
+  direccion: string
+): Promise<{ lat: number; lng: number } | null> {
+  try {
+    const url = new URL("https://nominatim.openstreetmap.org/search");
+    url.searchParams.set("format", "json");
+    url.searchParams.set("q", direccion);
+    url.searchParams.set("limit", "1");
+
+    const respuesta = await fetch(url, {
+      headers: { "User-Agent": "NubiraTag/1.0 (contacto@nubira.cl)" },
+    });
+
+    if (!respuesta.ok) return null;
+
+    const resultados = (await respuesta.json()) as Array<{
+      lat: string;
+      lon: string;
+    }>;
+
+    const primero = resultados[0];
+    if (!primero) return null;
+
+    return { lat: Number(primero.lat), lng: Number(primero.lon) };
+  } catch (error) {
+    console.error(`No se pudo geocodificar "${direccion}":`, error);
+    return null;
+  }
+}
+
+export type EstadoDireccionColegio =
+  | { guardado: true; lat: number | null; lng: number | null }
+  | { guardado: false; error: string }
+  | undefined;
+
+export async function actualizarDireccionColegio(
+  colegioId: number,
+  _prevState: EstadoDireccionColegio,
+  formData: FormData
+): Promise<EstadoDireccionColegio> {
+  const alcance = await resolverAlcanceColegio();
+  await verificarPropiedadColegio(colegioId, alcance);
+
+  const direccion = String(formData.get("direccion") ?? "").trim();
+
+  if (!direccion) {
+    return { guardado: false, error: "Ingresa una dirección." };
+  }
+
+  await prisma.colegio.update({
+    where: { id: colegioId },
+    data: { direccion },
+  });
+
+  const coords = await geocodificarDireccion(direccion);
+
+  revalidatePath(`/admin/colegios/${colegioId}/mapa`);
+
+  return {
+    guardado: true,
+    lat: coords?.lat ?? null,
+    lng: coords?.lng ?? null,
+  };
 }
 
 function parseCoordenada(valor: FormDataEntryValue | null): number | null {
@@ -84,6 +170,7 @@ export async function crearUbicacion(formData: FormData) {
   });
 
   revalidatePath("/admin/ubicaciones");
+  revalidatePath(`/admin/colegios/${colegioId}/mapa`);
 }
 
 export type EstadoGuardadoUbicacion = { guardado: boolean } | undefined;
@@ -94,7 +181,7 @@ export async function actualizarNombreUbicacion(
   formData: FormData
 ): Promise<EstadoGuardadoUbicacion> {
   const alcance = await resolverAlcanceColegio();
-  await verificarPropiedadUbicacion(ubicacionId, alcance);
+  const ubicacion = await verificarPropiedadUbicacion(ubicacionId, alcance);
 
   const nombre = String(formData.get("nombre") ?? "").trim();
 
@@ -111,6 +198,7 @@ export async function actualizarNombreUbicacion(
   });
 
   revalidatePath("/admin/ubicaciones");
+  revalidatePath(`/admin/colegios/${ubicacion.colegioId}/mapa`);
 
   return { guardado: true };
 }
@@ -120,7 +208,7 @@ export async function cambiarActivoUbicacion(
   activo: boolean
 ) {
   const alcance = await resolverAlcanceColegio();
-  await verificarPropiedadUbicacion(ubicacionId, alcance);
+  const ubicacion = await verificarPropiedadUbicacion(ubicacionId, alcance);
 
   await prisma.ubicacion.update({
     where: { id: ubicacionId },
@@ -128,4 +216,5 @@ export async function cambiarActivoUbicacion(
   });
 
   revalidatePath("/admin/ubicaciones");
+  revalidatePath(`/admin/colegios/${ubicacion.colegioId}/mapa`);
 }

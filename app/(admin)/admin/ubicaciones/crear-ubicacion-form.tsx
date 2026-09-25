@@ -15,13 +15,20 @@ const MapaUbicacion = dynamic(
 export function CrearUbicacionForm({
   esSuperAdmin,
   colegios,
+  colegioIdFijo,
+  centroDefecto,
 }: {
   esSuperAdmin: boolean;
   colegios: { id: number; nombre: string }[];
+  colegioIdFijo?: number;
+  centroDefecto?: [number, number];
 }) {
   return (
     <form action={crearUbicacion} className="flex items-end gap-2">
-      {esSuperAdmin && (
+      {colegioIdFijo != null && (
+        <input type="hidden" name="colegioId" value={colegioIdFijo} />
+      )}
+      {colegioIdFijo == null && esSuperAdmin && (
         <div className="flex flex-col gap-1">
           <label htmlFor="colegioId" className="text-sm">
             Colegio
@@ -61,6 +68,7 @@ export function CrearUbicacionForm({
         lngInicial={null}
         nombreCampoLat="latitud"
         nombreCampoLng="longitud"
+        centroDefecto={centroDefecto}
       />
       <button type="submit" className="bg-black text-white rounded px-3 py-2">
         Agregar
