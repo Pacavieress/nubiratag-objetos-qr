@@ -163,6 +163,20 @@ export async function registrarHallazgo(
 
   // Sin nota: el funcionario solo toca la ubicación, no escribe nada
   // (decisión de producto — un solo toque, o toque + confirmar).
+  // Evita hallazgos duplicados para el mismo QR: si ya hay uno abierto,
+  // no se crea otro (antes no había ningún chequeo acá).
+  const hallazgoAbierto = await prisma.hallazgo.findFirst({
+    where: { qrCodigoId: qr.id, estado: "reportado" },
+  });
+
+  if (hallazgoAbierto) {
+    return {
+      ok: false,
+      error:
+        "Ya hay un hallazgo abierto para este objeto. Ve a Entregar objeto con su código de retiro, o ciérralo primero en Hallazgos.",
+    };
+  }
+
   const hallazgo = await crearHallazgoConCodigoUnico({
     qrCodigoId: qr.id,
     ubicacionId,

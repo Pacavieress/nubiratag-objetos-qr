@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { notificarRetiro } from "@/lib/notificaciones";
 
 // Igual que en el grupo (apoderado): estas son, en los hechos, endpoints
 // HTTP públicos. proxy.ts protege /funcionario/** exigiendo rol
@@ -36,11 +37,20 @@ export async function requireFuncionario(): Promise<{
 async function transicionarHallazgo(
   hallazgoId: number,
   colegioId: number,
+  funcionarioId: number,
   nuevoEstado: "retirado" | "descartado"
 ) {
   const hallazgo = await prisma.hallazgo.findUnique({
     where: { id: hallazgoId },
-    include: { qrCodigo: true },
+    include: {
+      qrCodigo: {
+        include: {
+          estudiante: { include: { apoderado: true } },
+          colegio: true,
+        },
+      },
+      ubicacion: true,
+    },
   });
 
   if (!hallazgo || hallazgo.qrCodigo.colegioId !== colegioId) {
@@ -53,21 +63,43 @@ async function transicionarHallazgo(
     return;
   }
 
-  await prisma.hallazgo.update({
+  const actualizado = await prisma.hallazgo.update({
     where: { id: hallazgoId },
-    data: { estado: nuevoEstado },
+    data:
+      nuevoEstado === "retirado"
+        ? {
+            estado: nuevoEstado,
+            retiradoAt: new Date(),
+            retiradoPorId: funcionarioId,
+          }
+        : { estado: nuevoEstado },
   });
 
   revalidatePath("/funcionario/hallazgos");
   revalidatePath(`/apoderado/estudiantes/${hallazgo.qrCodigo.estudianteId}`);
+
+  // Solo "retirado" avisa al apoderado; marcarDescartado nunca llega acá.
+  if (nuevoEstado === "retirado") {
+    await notificarRetiro(hallazgoId, hallazgo, actualizado.retiradoAt!);
+  }
 }
 
 export async function marcarRetirado(hallazgoId: number) {
   const funcionario = await requireFuncionario();
-  await transicionarHallazgo(hallazgoId, funcionario.colegioId, "retirado");
+  await transicionarHallazgo(
+    hallazgoId,
+    funcionario.colegioId,
+    funcionario.id,
+    "retirado"
+  );
 }
 
 export async function marcarDescartado(hallazgoId: number) {
   const funcionario = await requireFuncionario();
-  await transicionarHallazgo(hallazgoId, funcionario.colegioId, "descartado");
+  await transicionarHallazgo(
+    hallazgoId,
+    funcionario.colegioId,
+    funcionario.id,
+    "descartado"
+  );
 }

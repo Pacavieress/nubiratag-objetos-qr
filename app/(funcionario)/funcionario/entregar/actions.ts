@@ -4,8 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { enviarCorreoRetiro } from "@/lib/email";
-import { registrarYEnviarNotificacion } from "@/lib/notificaciones";
+import { notificarRetiro } from "@/lib/notificaciones";
 import { extraerToken } from "@/lib/qr";
 
 // Mismo patrón que requireFuncionario en el resto del panel.
@@ -201,22 +200,7 @@ export async function entregarObjeto(
     },
   });
 
-  const destinatario = hallazgo.qrCodigo.estudiante.apoderado.email;
-  const datos = {
-    nombreEstudiante: hallazgo.qrCodigo.estudiante.nombre,
-    etiqueta: hallazgo.qrCodigo.etiqueta,
-    ubicacion: hallazgo.ubicacion.nombre,
-    colegio: hallazgo.qrCodigo.colegio.nombre,
-    fecha: actualizado.retiradoAt!,
-  };
-
-  await registrarYEnviarNotificacion({
-    hallazgoId,
-    canal: "email",
-    destinatario,
-    payload: { ...datos },
-    enviar: () => enviarCorreoRetiro({ destinatario, ...datos }),
-  });
+  await notificarRetiro(hallazgoId, hallazgo, actualizado.retiradoAt!);
 
   revalidatePath("/funcionario/hallazgos");
   revalidatePath(`/apoderado/estudiantes/${hallazgo.qrCodigo.estudianteId}`);
