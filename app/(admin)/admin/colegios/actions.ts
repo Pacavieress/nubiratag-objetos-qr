@@ -139,3 +139,19 @@ export async function crearAdminColegio(
 
   revalidatePath("/admin/colegios");
 }
+
+export async function desactivarAdmin(usuarioId: number, activo: boolean) {
+  await requireSuperAdmin();
+
+  const usuario = await prisma.usuario.findUnique({ where: { id: usuarioId } });
+
+  // Mismo criterio que verificarPropiedadFuncionario: evita operar sobre
+  // una cuenta que no sea admin, aunque llegue un id ajeno a mano.
+  if (!usuario || usuario.rol !== "admin") {
+    throw new Error("No autorizado.");
+  }
+
+  await prisma.usuario.update({ where: { id: usuarioId }, data: { activo } });
+
+  revalidatePath(`/admin/colegios/${usuario.colegioId!}`);
+}

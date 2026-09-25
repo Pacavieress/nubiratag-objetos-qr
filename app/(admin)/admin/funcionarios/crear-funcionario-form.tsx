@@ -9,15 +9,20 @@ import { crearFuncionario } from "./actions";
 export function CrearFuncionarioForm({
   esSuperAdmin,
   colegios,
+  colegioIdFijo,
 }: {
   esSuperAdmin: boolean;
   colegios: { id: number; nombre: string }[];
+  colegioIdFijo?: number;
 }) {
   const [error, formAction] = useActionState(crearFuncionario, undefined);
 
   return (
     <form action={formAction} className="mt-3 flex flex-col gap-3">
-      {esSuperAdmin && (
+      {colegioIdFijo != null && (
+        <input type="hidden" name="colegioId" value={colegioIdFijo} />
+      )}
+      {colegioIdFijo == null && esSuperAdmin && (
         <div className="flex flex-col gap-1.5">
           <label
             htmlFor="colegioId"

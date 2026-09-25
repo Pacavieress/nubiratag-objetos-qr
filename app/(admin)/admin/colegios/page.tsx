@@ -1,10 +1,9 @@
-import { Building2, Minus, Plus } from "lucide-react";
+import Link from "next/link";
+import { Building2 } from "lucide-react";
 
 import { prisma } from "@/lib/db";
 import { requireSuperAdmin } from "./actions";
 import { CrearColegioForm } from "./crear-colegio-form";
-import { AdminColegioForm } from "./admin-colegio-form";
-import { NombreColegioForm } from "./nombre-colegio-form";
 
 export default async function ColegiosPage() {
   await requireSuperAdmin();
@@ -32,46 +31,24 @@ export default async function ColegiosPage() {
 
       <section className="flex flex-col gap-3">
         {colegios.map((colegio) => (
-          <details
+          <Link
             key={colegio.id}
-            className="group rounded-2xl border border-gray-100 bg-white p-5 sm:p-6"
+            href={`/admin/colegios/${colegio.id}`}
+            className="flex items-center gap-2 rounded-2xl border border-gray-100 bg-white p-5 transition hover:border-[#54A6D8]/40 sm:p-6"
           >
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 marker:hidden [&::-webkit-details-marker]:hidden">
-              <div className="flex items-center gap-2">
-                <Building2 className="h-5 w-5 shrink-0 text-[#54A6D8]" />
-                <div>
-                  <h2 className="text-base font-semibold text-gray-900">
-                    {colegio.nombre}
-                  </h2>
-                  <p className="mt-0.5 text-xs text-gray-500">
-                    Código: {colegio.codigoRegistro} ·{" "}
-                    {colegio._count.estudiantes} estudiantes ·{" "}
-                    {colegio._count.usuarios} funcionarios · Creado el{" "}
-                    {colegio.createdAt.toLocaleDateString("es-CL")}
-                  </p>
-                </div>
-              </div>
-              <Plus className="h-5 w-5 shrink-0 text-gray-400 group-open:hidden" />
-              <Minus className="hidden h-5 w-5 shrink-0 text-gray-400 group-open:block" />
-            </summary>
-
-            <div className="mt-4 border-t border-gray-100 pt-4">
-              <h3 className="text-sm font-medium text-gray-600">
-                Nombre del colegio
-              </h3>
-              <NombreColegioForm
-                colegioId={colegio.id}
-                nombreInicial={colegio.nombre}
-              />
+            <Building2 className="h-5 w-5 shrink-0 text-[#54A6D8]" />
+            <div>
+              <h2 className="text-base font-semibold text-gray-900">
+                {colegio.nombre}
+              </h2>
+              <p className="mt-0.5 text-xs text-gray-500">
+                Código: {colegio.codigoRegistro} ·{" "}
+                {colegio._count.estudiantes} estudiantes ·{" "}
+                {colegio._count.usuarios} funcionarios · Creado el{" "}
+                {colegio.createdAt.toLocaleDateString("es-CL")}
+              </p>
             </div>
-
-            <div className="mt-4 border-t border-gray-100 pt-4">
-              <h3 className="text-sm font-medium text-gray-600">
-                Agregar administrador
-              </h3>
-              <AdminColegioForm colegioId={colegio.id} />
-            </div>
-          </details>
+          </Link>
         ))}
 
         {colegios.length === 0 && (
