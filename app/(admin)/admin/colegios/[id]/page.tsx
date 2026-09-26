@@ -3,27 +3,27 @@ import { Minus, Plus } from "lucide-react";
 
 import { prisma } from "@/lib/db";
 import { VolverLink } from "@/components/volver-link";
-import { requireSuperAdmin, desactivarAdmin } from "../actions";
+import { requireAccesoColegio, desactivarAdmin } from "../actions";
 import { EliminarAdminButton } from "../eliminar-admin-button";
 import { NombreColegioForm } from "../nombre-colegio-form";
 import { CodigoColegioForm } from "../codigo-colegio-form";
 import { AdminColegioForm } from "../admin-colegio-form";
-import { cambiarActivoFuncionario } from "../../funcionarios/actions";
-import { CrearFuncionarioForm } from "../../funcionarios/crear-funcionario-form";
+import { cambiarActivoFuncionario } from "../funcionario-actions";
+import { CrearFuncionarioForm } from "../crear-funcionario-form";
 
 export default async function ColegioDetallePage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireSuperAdmin();
-
   const { id } = await params;
   const colegioId = Number(id);
 
   if (!Number.isInteger(colegioId)) {
     notFound();
   }
+
+  const { esSuperAdmin } = await requireAccesoColegio(colegioId);
 
   const colegio = await prisma.colegio.findUnique({
     where: { id: colegioId },
@@ -51,7 +51,7 @@ export default async function ColegioDetallePage({
 
   return (
     <main className="flex flex-col gap-6">
-      <VolverLink href="/admin/colegios" />
+      <VolverLink href={esSuperAdmin ? "/admin/colegios" : "/admin"} />
 
       <div>
         <h1 className="text-xl font-semibold text-gray-900">
@@ -62,85 +62,91 @@ export default async function ColegioDetallePage({
         </p>
       </div>
 
-      <section className="rounded-2xl border border-gray-100 bg-white p-5 sm:p-6">
-        <h2 className="text-sm font-medium text-gray-600">
-          Nombre del colegio
-        </h2>
-        <NombreColegioForm
-          colegioId={colegio.id}
-          nombreInicial={colegio.nombre}
-        />
-      </section>
-
-      <section className="rounded-2xl border border-gray-100 bg-white p-5 sm:p-6">
-        <h2 className="text-sm font-medium text-gray-600">
-          Código de registro
-        </h2>
-        <CodigoColegioForm
-          colegioId={colegio.id}
-          codigoInicial={colegio.codigoRegistro}
-        />
-      </section>
-
-      <details className="group rounded-2xl border border-gray-100 bg-white p-5 sm:p-6">
-        <summary className="flex cursor-pointer list-none items-center justify-between marker:hidden [&::-webkit-details-marker]:hidden">
-          <h2 className="text-base font-semibold text-gray-900">
-            Administradores ({admins.length})
+      {esSuperAdmin && (
+        <section className="rounded-2xl border border-gray-100 bg-white p-5 sm:p-6">
+          <h2 className="text-sm font-medium text-gray-600">
+            Nombre del colegio
           </h2>
-          <Plus className="h-5 w-5 shrink-0 text-gray-400 group-open:hidden" />
-          <Minus className="hidden h-5 w-5 shrink-0 text-gray-400 group-open:block" />
-        </summary>
+          <NombreColegioForm
+            colegioId={colegio.id}
+            nombreInicial={colegio.nombre}
+          />
+        </section>
+      )}
 
-        <div className="mt-4 flex flex-col gap-3 border-t border-gray-100 pt-4">
-          {admins.map((admin) => (
-            <div
-              key={admin.id}
-              className="flex items-center justify-between gap-3 rounded-lg border border-gray-100 p-3"
-            >
-              <div>
-                <p className="text-sm font-semibold text-gray-900">
-                  {admin.nombre}
-                </p>
-                <p className="text-xs text-gray-500">{admin.email}</p>
-              </div>
-              <div className="flex items-center gap-3">
-                <span
-                  className={`text-xs font-medium ${
-                    admin.activo ? "text-emerald-700" : "text-gray-400"
-                  }`}
-                >
-                  {admin.activo ? "Activo" : "Inactivo"}
-                </span>
-                <form
-                  action={desactivarAdmin.bind(
-                    null,
-                    admin.id,
-                    !admin.activo
-                  )}
-                >
-                  <button
-                    type="submit"
-                    className="text-xs font-medium text-[#54A6D8] underline"
+      {esSuperAdmin && (
+        <section className="rounded-2xl border border-gray-100 bg-white p-5 sm:p-6">
+          <h2 className="text-sm font-medium text-gray-600">
+            Código de registro
+          </h2>
+          <CodigoColegioForm
+            colegioId={colegio.id}
+            codigoInicial={colegio.codigoRegistro}
+          />
+        </section>
+      )}
+
+      {esSuperAdmin && (
+        <details className="group rounded-2xl border border-gray-100 bg-white p-5 sm:p-6">
+          <summary className="flex cursor-pointer list-none items-center justify-between marker:hidden [&::-webkit-details-marker]:hidden">
+            <h2 className="text-base font-semibold text-gray-900">
+              Administradores ({admins.length})
+            </h2>
+            <Plus className="h-5 w-5 shrink-0 text-gray-400 group-open:hidden" />
+            <Minus className="hidden h-5 w-5 shrink-0 text-gray-400 group-open:block" />
+          </summary>
+
+          <div className="mt-4 flex flex-col gap-3 border-t border-gray-100 pt-4">
+            {admins.map((admin) => (
+              <div
+                key={admin.id}
+                className="flex items-center justify-between gap-3 rounded-lg border border-gray-100 p-3"
+              >
+                <div>
+                  <p className="text-sm font-semibold text-gray-900">
+                    {admin.nombre}
+                  </p>
+                  <p className="text-xs text-gray-500">{admin.email}</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span
+                    className={`text-xs font-medium ${
+                      admin.activo ? "text-emerald-700" : "text-gray-400"
+                    }`}
                   >
-                    {admin.activo ? "Desactivar" : "Reactivar"}
-                  </button>
-                </form>
-                <EliminarAdminButton usuarioId={admin.id} />
+                    {admin.activo ? "Activo" : "Inactivo"}
+                  </span>
+                  <form
+                    action={desactivarAdmin.bind(
+                      null,
+                      admin.id,
+                      !admin.activo
+                    )}
+                  >
+                    <button
+                      type="submit"
+                      className="text-xs font-medium text-[#54A6D8] underline"
+                    >
+                      {admin.activo ? "Desactivar" : "Reactivar"}
+                    </button>
+                  </form>
+                  <EliminarAdminButton usuarioId={admin.id} />
+                </div>
               </div>
-            </div>
-          ))}
-          {admins.length === 0 && (
-            <p className="text-sm text-gray-500">
-              Todavía no hay administradores.
-            </p>
-          )}
+            ))}
+            {admins.length === 0 && (
+              <p className="text-sm text-gray-500">
+                Todavía no hay administradores.
+              </p>
+            )}
 
-          <h3 className="mt-2 text-sm font-medium text-gray-600">
-            Agregar administrador
-          </h3>
-          <AdminColegioForm colegioId={colegio.id} />
-        </div>
-      </details>
+            <h3 className="mt-2 text-sm font-medium text-gray-600">
+              Agregar administrador
+            </h3>
+            <AdminColegioForm colegioId={colegio.id} />
+          </div>
+        </details>
+      )}
 
       <details className="group rounded-2xl border border-gray-100 bg-white p-5 sm:p-6">
         <summary className="flex cursor-pointer list-none items-center justify-between marker:hidden [&::-webkit-details-marker]:hidden">

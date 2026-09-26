@@ -4,7 +4,7 @@ import { useActionState } from "react";
 import { AlertCircle } from "lucide-react";
 
 import { BotonSubmit } from "@/components/boton-submit";
-import { crearFuncionario } from "./actions";
+import { crearFuncionario } from "./funcionario-actions";
 
 export function CrearFuncionarioForm({
   esSuperAdmin,

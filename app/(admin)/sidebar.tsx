@@ -10,7 +10,9 @@ import { NAV_ITEMS } from "./nav-items";
 export function Sidebar({ esSuperAdmin }: { esSuperAdmin: boolean }) {
   const pathname = usePathname();
   const items = NAV_ITEMS.filter(
-    (item) => !item.soloSuperAdmin || esSuperAdmin
+    (item) =>
+      (!item.soloSuperAdmin || esSuperAdmin) &&
+      (!item.soloAdminColegio || !esSuperAdmin)
   );
 
   return (

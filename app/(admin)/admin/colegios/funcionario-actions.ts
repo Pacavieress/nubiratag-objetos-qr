@@ -45,6 +45,8 @@ async function verificarPropiedadFuncionario(
   if (!alcance.esSuperAdmin && usuario.colegioId !== alcance.colegioId) {
     throw new Error("No autorizado.");
   }
+
+  return usuario;
 }
 
 export async function crearFuncionario(
@@ -114,7 +116,7 @@ export async function crearFuncionario(
     throw error;
   }
 
-  revalidatePath("/admin/funcionarios");
+  revalidatePath(`/admin/colegios/${colegioId}`);
 }
 
 export async function cambiarActivoFuncionario(
@@ -122,9 +124,9 @@ export async function cambiarActivoFuncionario(
   activo: boolean
 ) {
   const alcance = await resolverAlcanceColegio();
-  await verificarPropiedadFuncionario(usuarioId, alcance);
+  const usuario = await verificarPropiedadFuncionario(usuarioId, alcance);
 
   await prisma.usuario.update({ where: { id: usuarioId }, data: { activo } });
 
-  revalidatePath("/admin/funcionarios");
+  revalidatePath(`/admin/colegios/${usuario.colegioId}`);
 }

@@ -1,15 +1,16 @@
-import { Building2, MapPin, Users, type LucideIcon } from "lucide-react";
+import { Building2, MapPin, type LucideIcon } from "lucide-react";
 
 export type NavItem = {
   href: string;
   label: string;
   icon: LucideIcon;
-  // Solo visible para super admin (rol admin con colegioId: null). Hoy
-  // todo admin es super admin, así que esto no filtra nada en la
-  // práctica — pero /admin/colegios igual exige requireSuperAdmin(), así
-  // que un futuro admin de colegio rebotaría a /admin si entrara por URL
-  // directa. Este flag solo evita mostrarle el link.
+  // Visible solo para superadmin (colegioId: null). /admin/colegios/[id]
+  // igual re-valida con requireAccesoColegio, así que este flag solo
+  // evita mostrarle el link a un admin de colegio — no es la única
+  // barrera.
   soloSuperAdmin?: boolean;
+  // Inverso de soloSuperAdmin: visible solo para admin de colegio.
+  soloAdminColegio?: boolean;
 };
 
 // "Estudiantes" se sacó de acá: ese flujo es del apoderado ahora
@@ -23,7 +24,12 @@ export const NAV_ITEMS: NavItem[] = [
     icon: Building2,
     soloSuperAdmin: true,
   },
-  { href: "/admin/funcionarios", label: "Funcionarios", icon: Users },
+  {
+    href: "/admin/mi-colegio",
+    label: "Mi colegio",
+    icon: Building2,
+    soloAdminColegio: true,
+  },
   { href: "/admin/ubicaciones", label: "Ubicaciones", icon: MapPin },
   // Próximamente: Hallazgos (vista global).
 ];

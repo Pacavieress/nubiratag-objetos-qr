@@ -32,6 +32,37 @@ export async function requireSuperAdmin(): Promise<void> {
   }
 }
 
+// Guard de /admin/colegios/[id]: a diferencia de requireSuperAdmin, deja
+// entrar también a un admin de colegio — pero solo a SU propio colegio.
+// Si intenta ver otro, lo manda de vuelta al suyo en vez de un error
+// genérico (evita revelar si otro colegioId existe o no).
+export async function requireAccesoColegio(
+  colegioId: number
+): Promise<{ esSuperAdmin: boolean }> {
+  const session = await auth();
+
+  if (
+    !session?.user ||
+    (session.user.rol !== "admin" && session.user.rol !== "superadmin")
+  ) {
+    redirect("/login");
+  }
+
+  if (session.user.rol === "superadmin") {
+    return { esSuperAdmin: true };
+  }
+
+  if (session.user.colegioId == null) {
+    redirect("/admin");
+  }
+
+  if (session.user.colegioId !== colegioId) {
+    redirect(`/admin/colegios/${session.user.colegioId}`);
+  }
+
+  return { esSuperAdmin: false };
+}
+
 const MAX_INTENTOS_CODIGO = 5;
 
 /** Crea un colegio con un codigoRegistro único, reintentando ante una
