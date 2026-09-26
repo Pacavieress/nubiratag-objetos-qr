@@ -27,7 +27,7 @@ export function Header({
   return (
     <header className="flex items-center justify-between border-b border-gray-100 bg-white px-6 py-4">
       <div>
-        <p className="text-sm lg:hidden">
+        <p className="text-sm md:hidden">
           <span className="text-[#2c7bc0]">Nubira</span>
           <span className="text-[#ff914d]">Tag</span>
         </p>
