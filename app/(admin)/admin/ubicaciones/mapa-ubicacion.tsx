@@ -18,12 +18,20 @@ import "leaflet/dist/leaflet.css";
 // Leaflet arma la URL del ícono por defecto a partir de su propio bundle,
 // lo que no funciona con el bundler de Next.js — se reemplaza a mano por
 // los assets importados. Corre una sola vez al cargar el módulo.
+//
+// Con Turbopack (Next 16) un import de imagen puede devolver directo el
+// string de la URL en vez del objeto StaticImageData {src, width, ...}
+// que se ve con webpack — de ahí el ?? para cubrir ambos casos.
+function urlDeAsset(asset: string | { src: string }): string {
+  return typeof asset === "string" ? asset : asset.src;
+}
+
 delete (L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown })
   ._getIconUrl;
 L.Icon.Default.mergeOptions({
-  iconRetinaUrl: markerIcon2x.src,
-  iconUrl: markerIcon.src,
-  shadowUrl: markerShadow.src,
+  iconRetinaUrl: urlDeAsset(markerIcon2x),
+  iconUrl: urlDeAsset(markerIcon),
+  shadowUrl: urlDeAsset(markerShadow),
 });
 
 // Centro de Chile continental, usado mientras la ubicación no tiene
