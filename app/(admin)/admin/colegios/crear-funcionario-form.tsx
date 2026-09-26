@@ -98,7 +98,9 @@ export function CrearFuncionarioForm({
         </div>
       )}
 
-      <BotonSubmit label="Crear funcionario" loadingLabel="Creando..." />
+      <div className="max-w-md">
+        <BotonSubmit label="Crear funcionario" loadingLabel="Creando..." />
+      </div>
     </form>
   );
 }

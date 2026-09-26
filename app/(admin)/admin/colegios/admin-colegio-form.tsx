@@ -70,7 +70,9 @@ export function AdminColegioForm({ colegioId }: { colegioId: number }) {
         </div>
       )}
 
-      <BotonSubmit label="Crear administrador" loadingLabel="Creando..." />
+      <div className="max-w-md">
+        <BotonSubmit label="Crear administrador" loadingLabel="Creando..." />
+      </div>
     </form>
   );
 }
