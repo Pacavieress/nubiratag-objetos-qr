@@ -1,9 +1,4 @@
-"use client";
-
-import { usePathname } from "next/navigation";
 import type { RolUsuario } from "@prisma/client";
-
-import { NAV_ITEMS } from "./nav-items";
 
 const ROL_LABEL: Record<RolUsuario, string> = {
   admin: "Administrador",
@@ -19,27 +14,26 @@ export function Header({
   email: string | null | undefined;
   rol: RolUsuario | null | undefined;
 }) {
-  const pathname = usePathname();
-  const seccion =
-    NAV_ITEMS.find((item) => pathname.startsWith(item.href))?.label ?? "Panel";
-  const etiquetaRol = rol ? ROL_LABEL[rol] : null;
+  const usuario = email?.split("@")[0];
+  const usuarioCapitalizado = usuario
+    ? usuario.charAt(0).toUpperCase() + usuario.slice(1)
+    : usuario;
 
   return (
-    <header className="flex items-center justify-between border-b border-gray-100 bg-white px-6 py-4">
-      <div>
-        <p className="text-sm md:hidden">
-          <span className="text-[#2c7bc0]">Nubira</span>
-          <span className="text-[#ff914d]">Tag</span>
-        </p>
-        <h1 className="text-base font-semibold text-gray-900">{seccion}</h1>
-      </div>
-      {email && (
-        <div className="text-right">
+    <header className="flex items-center justify-between border-b border-gray-100 bg-white px-6 py-3 print:hidden">
+      <p className="text-xl font-bold sm:text-2xl md:hidden">
+        <span className="text-[#2c7bc0]">Nubira</span>
+        <span className="text-[#ff914d]">Tag</span>
+      </p>
+      {usuarioCapitalizado && (
+        <div className="ml-auto text-right">
           <span className="block text-sm font-bold text-gray-600">
-            {email.split("@")[0]}
+            {usuarioCapitalizado}
           </span>
-          {etiquetaRol && (
-            <span className="block text-xs text-gray-400">{etiquetaRol}</span>
+          {rol && (
+            <span className="block text-xs text-gray-400">
+              {ROL_LABEL[rol]}
+            </span>
           )}
         </div>
       )}
