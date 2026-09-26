@@ -25,7 +25,7 @@ export function AdminColegioForm({ colegioId }: { colegioId: number }) {
           id={`nombre-${colegioId}`}
           name="nombre"
           required
-          className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#54A6D8] focus:outline-none focus:ring-2 focus:ring-[#54A6D8]"
+          className="w-full max-w-md rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#54A6D8] focus:outline-none focus:ring-2 focus:ring-[#54A6D8]"
         />
       </div>
       <div className="flex flex-col gap-1.5">
@@ -40,7 +40,7 @@ export function AdminColegioForm({ colegioId }: { colegioId: number }) {
           name="email"
           type="email"
           required
-          className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#54A6D8] focus:outline-none focus:ring-2 focus:ring-[#54A6D8]"
+          className="w-full max-w-md rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#54A6D8] focus:outline-none focus:ring-2 focus:ring-[#54A6D8]"
         />
       </div>
       <div className="flex flex-col gap-1.5">
@@ -56,7 +56,7 @@ export function AdminColegioForm({ colegioId }: { colegioId: number }) {
           type="password"
           required
           minLength={8}
-          className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#54A6D8] focus:outline-none focus:ring-2 focus:ring-[#54A6D8]"
+          className="w-full max-w-md rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#54A6D8] focus:outline-none focus:ring-2 focus:ring-[#54A6D8]"
         />
       </div>
 
