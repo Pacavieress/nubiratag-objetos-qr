@@ -38,7 +38,7 @@ export function CrearUbicacionForm({
             name="colegioId"
             required
             defaultValue=""
-            className="border rounded px-3 py-2"
+            className="max-w-md rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#54A6D8] focus:outline-none focus:ring-2 focus:ring-[#54A6D8]"
           >
             <option value="" disabled>
               Selecciona un colegio
@@ -60,7 +60,7 @@ export function CrearUbicacionForm({
           name="nombre"
           required
           placeholder="p. ej. Biblioteca"
-          className="border rounded px-3 py-2"
+          className="max-w-md rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#54A6D8] focus:outline-none focus:ring-2 focus:ring-[#54A6D8]"
         />
       </div>
       <MapaUbicacion
@@ -70,7 +70,10 @@ export function CrearUbicacionForm({
         nombreCampoLng="longitud"
         centroDefecto={centroDefecto}
       />
-      <button type="submit" className="bg-black text-white rounded px-3 py-2">
+      <button
+        type="submit"
+        className="rounded-lg bg-[#54A6D8] px-4 py-2 text-sm font-medium text-white"
+      >
         Agregar
       </button>
     </form>

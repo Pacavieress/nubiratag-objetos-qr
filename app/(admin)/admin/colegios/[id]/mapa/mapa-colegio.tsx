@@ -64,7 +64,7 @@ export function MapaColegio({
             name="direccion"
             defaultValue={direccionInicial}
             placeholder="p. ej. Av. Siempre Viva 123, Santiago"
-            className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#54A6D8] focus:outline-none focus:ring-2 focus:ring-[#54A6D8]"
+            className="max-w-md rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#54A6D8] focus:outline-none focus:ring-2 focus:ring-[#54A6D8]"
           />
         </div>
         <button
