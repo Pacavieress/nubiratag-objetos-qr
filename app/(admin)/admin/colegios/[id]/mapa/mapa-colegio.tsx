@@ -51,7 +51,7 @@ export function MapaColegio({
   return (
     <div className="flex flex-col gap-6">
       <form action={formAction} className="flex items-end gap-2">
-        <div className="flex flex-1 flex-col gap-1.5">
+        <div className="max-w-md flex flex-col gap-1.5">
           <label
             htmlFor="direccion"
             className="text-sm font-medium text-gray-600"
