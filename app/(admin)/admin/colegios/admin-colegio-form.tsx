@@ -17,7 +17,7 @@ export function AdminColegioForm({ colegioId }: { colegioId: number }) {
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor={`nombre-${colegioId}`}
-          className="text-sm font-medium text-gray-600"
+          className="text-xs font-medium text-gray-600"
         >
           Nombre
         </label>
@@ -25,13 +25,13 @@ export function AdminColegioForm({ colegioId }: { colegioId: number }) {
           id={`nombre-${colegioId}`}
           name="nombre"
           required
-          className="rounded-lg border border-gray-300 px-4 py-3 text-base focus:border-[#54A6D8] focus:outline-none focus:ring-2 focus:ring-[#54A6D8]"
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#54A6D8] focus:outline-none focus:ring-2 focus:ring-[#54A6D8]"
         />
       </div>
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor={`email-${colegioId}`}
-          className="text-sm font-medium text-gray-600"
+          className="text-xs font-medium text-gray-600"
         >
           Correo electrónico
         </label>
@@ -40,13 +40,13 @@ export function AdminColegioForm({ colegioId }: { colegioId: number }) {
           name="email"
           type="email"
           required
-          className="rounded-lg border border-gray-300 px-4 py-3 text-base focus:border-[#54A6D8] focus:outline-none focus:ring-2 focus:ring-[#54A6D8]"
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#54A6D8] focus:outline-none focus:ring-2 focus:ring-[#54A6D8]"
         />
       </div>
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor={`password-${colegioId}`}
-          className="text-sm font-medium text-gray-600"
+          className="text-xs font-medium text-gray-600"
         >
           Contraseña
         </label>
@@ -56,7 +56,7 @@ export function AdminColegioForm({ colegioId }: { colegioId: number }) {
           type="password"
           required
           minLength={8}
-          className="rounded-lg border border-gray-300 px-4 py-3 text-base focus:border-[#54A6D8] focus:outline-none focus:ring-2 focus:ring-[#54A6D8]"
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#54A6D8] focus:outline-none focus:ring-2 focus:ring-[#54A6D8]"
         />
       </div>
 

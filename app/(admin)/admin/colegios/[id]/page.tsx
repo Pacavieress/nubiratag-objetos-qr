@@ -50,7 +50,7 @@ export default async function ColegioDetallePage({
   ]);
 
   return (
-    <main className="flex flex-col gap-6">
+    <main className="flex flex-col gap-4">
       <VolverLink href={esSuperAdmin ? "/admin/colegios" : "/admin"} />
 
       <div>
@@ -63,7 +63,7 @@ export default async function ColegioDetallePage({
       </div>
 
       {esSuperAdmin && (
-        <section className="rounded-2xl border border-gray-100 bg-white p-5 sm:p-6">
+        <section className="rounded-2xl border border-gray-100 bg-white p-4 sm:p-5">
           <h2 className="text-sm font-medium text-gray-600">
             Nombre del colegio
           </h2>
@@ -75,7 +75,7 @@ export default async function ColegioDetallePage({
       )}
 
       {esSuperAdmin && (
-        <section className="rounded-2xl border border-gray-100 bg-white p-5 sm:p-6">
+        <section className="rounded-2xl border border-gray-100 bg-white p-4 sm:p-5">
           <h2 className="text-sm font-medium text-gray-600">
             Código de registro
           </h2>
@@ -87,7 +87,7 @@ export default async function ColegioDetallePage({
       )}
 
       {esSuperAdmin && (
-        <details className="group rounded-2xl border border-gray-100 bg-white p-5 sm:p-6">
+        <details className="group rounded-2xl border border-gray-100 bg-white p-4 sm:p-5">
           <summary className="flex cursor-pointer list-none items-center justify-between marker:hidden [&::-webkit-details-marker]:hidden">
             <h2 className="text-base font-semibold text-gray-900">
               Administradores ({admins.length})
@@ -148,7 +148,7 @@ export default async function ColegioDetallePage({
         </details>
       )}
 
-      <details className="group rounded-2xl border border-gray-100 bg-white p-5 sm:p-6">
+      <details className="group rounded-2xl border border-gray-100 bg-white p-4 sm:p-5">
         <summary className="flex cursor-pointer list-none items-center justify-between marker:hidden [&::-webkit-details-marker]:hidden">
           <h2 className="text-base font-semibold text-gray-900">
             Funcionarios ({funcionarios.length})
@@ -211,7 +211,7 @@ export default async function ColegioDetallePage({
         </div>
       </details>
 
-      <details className="group rounded-2xl border border-gray-100 bg-white p-5 sm:p-6">
+      <details className="group rounded-2xl border border-gray-100 bg-white p-4 sm:p-5">
         <summary className="flex cursor-pointer list-none items-center justify-between marker:hidden [&::-webkit-details-marker]:hidden">
           <h2 className="text-base font-semibold text-gray-900">
             Apoderados ({apoderados.length})

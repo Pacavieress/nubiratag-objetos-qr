@@ -26,7 +26,7 @@ export function BotonSubmit({
     <button
       type="submit"
       disabled={pending || disabled}
-      className={`flex w-full items-center justify-center gap-2 rounded-lg px-5 py-2.5 text-sm font-medium transition disabled:opacity-50 sm:w-auto ${VARIANTES[variante]}`}
+      className={`flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition disabled:opacity-50 sm:w-auto ${VARIANTES[variante]}`}
     >
       {pending ? (
         <>
