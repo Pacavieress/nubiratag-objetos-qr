@@ -103,15 +103,15 @@ export default async function ColegioDetallePage({
             {admins.map((admin) => (
               <div
                 key={admin.id}
-                className="flex items-center justify-between gap-3 rounded-lg border border-gray-100 p-3"
+                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-100 p-3"
               >
-                <div>
+                <div className="min-w-0">
                   <p className="text-sm font-semibold text-gray-900">
                     {admin.nombre}
                   </p>
                   <p className="text-xs text-gray-500">{admin.email}</p>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center gap-3">
                   <span
                     className={`text-xs font-medium ${
                       admin.activo ? "text-emerald-700" : "text-gray-400"
@@ -164,15 +164,15 @@ export default async function ColegioDetallePage({
           {funcionarios.map((funcionario) => (
             <div
               key={funcionario.id}
-              className="flex items-center justify-between gap-3 rounded-lg border border-gray-100 p-3"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-100 p-3"
             >
-              <div>
+              <div className="min-w-0">
                 <p className="text-sm font-semibold text-gray-900">
                   {funcionario.nombre}
                 </p>
                 <p className="text-xs text-gray-500">{funcionario.email}</p>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3">
                 <span
                   className={`text-xs font-medium ${
                     funcionario.activo ? "text-emerald-700" : "text-gray-400"
@@ -228,15 +228,15 @@ export default async function ColegioDetallePage({
           {apoderados.map((apoderado) => (
             <div
               key={apoderado.id}
-              className="flex items-center justify-between gap-3 rounded-lg border border-gray-100 p-3"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-100 p-3"
             >
-              <div>
+              <div className="min-w-0">
                 <p className="text-sm font-semibold text-gray-900">
                   {apoderado.nombre}
                 </p>
                 <p className="text-xs text-gray-500">{apoderado.email}</p>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3">
                 <span className="text-xs text-gray-500">
                   {apoderado._count.hijos} estudiante
                   {apoderado._count.hijos === 1 ? "" : "s"}
