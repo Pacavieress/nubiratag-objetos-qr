@@ -120,19 +120,32 @@ export default async function ColegioDetallePage({
                   >
                     {admin.activo ? "Activo" : "Inactivo"}
                   </span>
-                  <form
-                    action={desactivarAdmin.bind(
-                      null,
-                      admin.id,
-                      !admin.activo
-                    )}
-                  >
-                    <BotonSubmit
-                      label={admin.activo ? "Desactivar" : "Reactivar"}
-                      variante="gris"
-                    />
-                  </form>
-                  <EliminarAdminButton usuarioId={admin.id} />
+                  {/* grid en vez de flex: garantiza dos columnas de igual
+                      ancho sin importar el contexto (flex-1 en un
+                      contenedor auto-ajustado no lo asegura). El
+                      [&>button]:w-full! fuerza el botón real a llenar su
+                      celda incluso en sm: (BotonSubmit/ConfirmarAccion
+                      traen sm:w-auto) sin tocar esos componentes — el
+                      selector directo (>) no llega a los botones internos
+                      del <dialog> de ConfirmarAccion. */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <form
+                      action={desactivarAdmin.bind(
+                        null,
+                        admin.id,
+                        !admin.activo
+                      )}
+                      className="[&>button]:w-full!"
+                    >
+                      <BotonSubmit
+                        label={admin.activo ? "Desactivar" : "Reactivar"}
+                        variante="gris"
+                      />
+                    </form>
+                    <div className="[&>button]:w-full!">
+                      <EliminarAdminButton usuarioId={admin.id} />
+                    </div>
+                  </div>
                 </div>
               </div>
             ))}
@@ -179,19 +192,24 @@ export default async function ColegioDetallePage({
                 >
                   {funcionario.activo ? "Activo" : "Inactivo"}
                 </span>
-                <form
-                  action={cambiarActivoFuncionario.bind(
-                    null,
-                    funcionario.id,
-                    !funcionario.activo
-                  )}
-                >
-                  <BotonSubmit
-                    label={funcionario.activo ? "Desactivar" : "Reactivar"}
-                    variante="gris"
-                  />
-                </form>
-                <EliminarFuncionarioButton usuarioId={funcionario.id} />
+                <div className="grid grid-cols-2 gap-2">
+                  <form
+                    action={cambiarActivoFuncionario.bind(
+                      null,
+                      funcionario.id,
+                      !funcionario.activo
+                    )}
+                    className="[&>button]:w-full!"
+                  >
+                    <BotonSubmit
+                      label={funcionario.activo ? "Desactivar" : "Reactivar"}
+                      variante="gris"
+                    />
+                  </form>
+                  <div className="[&>button]:w-full!">
+                    <EliminarFuncionarioButton usuarioId={funcionario.id} />
+                  </div>
+                </div>
               </div>
             </div>
           ))}
@@ -249,19 +267,24 @@ export default async function ColegioDetallePage({
                     >
                       {apoderado.activo ? "Activo" : "Inactivo"}
                     </span>
-                    <form
-                      action={cambiarActivoApoderado.bind(
-                        null,
-                        apoderado.id,
-                        !apoderado.activo
-                      )}
-                    >
-                      <BotonSubmit
-                        label={apoderado.activo ? "Desactivar" : "Reactivar"}
-                        variante="gris"
-                      />
-                    </form>
-                    <EliminarApoderadoButton usuarioId={apoderado.id} />
+                    <div className="grid grid-cols-2 gap-2">
+                      <form
+                        action={cambiarActivoApoderado.bind(
+                          null,
+                          apoderado.id,
+                          !apoderado.activo
+                        )}
+                        className="[&>button]:w-full!"
+                      >
+                        <BotonSubmit
+                          label={apoderado.activo ? "Desactivar" : "Reactivar"}
+                          variante="gris"
+                        />
+                      </form>
+                      <div className="[&>button]:w-full!">
+                        <EliminarApoderadoButton usuarioId={apoderado.id} />
+                      </div>
+                    </div>
                   </>
                 )}
               </div>
