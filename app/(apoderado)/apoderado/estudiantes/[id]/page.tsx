@@ -8,7 +8,7 @@ import { cambiarActivoEstudiante, generarQrCode, revocarQr } from "../actions";
 import { BotonSubmit } from "@/components/boton-submit";
 import { VolverLink } from "@/components/volver-link";
 import { EtiquetaForm } from "./etiqueta-form";
-import { ConfirmarAccion } from "./confirmar-accion";
+import { ConfirmarAccion } from "@/components/confirmar-accion";
 
 const ESTADO_HALLAZGO_ESTILO: Record<string, string> = {
   reportado: "bg-amber-100 text-amber-700",

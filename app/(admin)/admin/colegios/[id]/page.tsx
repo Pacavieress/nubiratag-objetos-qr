@@ -3,6 +3,7 @@ import { Minus, Plus } from "lucide-react";
 
 import { prisma } from "@/lib/db";
 import { VolverLink } from "@/components/volver-link";
+import { BotonSubmit } from "@/components/boton-submit";
 import { requireAccesoColegio, desactivarAdmin } from "../actions";
 import { EliminarAdminButton } from "../eliminar-admin-button";
 import { EliminarFuncionarioButton } from "../eliminar-funcionario-button";
@@ -103,7 +104,7 @@ export default async function ColegioDetallePage({
             {admins.map((admin) => (
               <div
                 key={admin.id}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-100 p-3"
+                className="flex flex-col gap-3 rounded-lg border border-gray-100 p-3 sm:flex-row sm:items-center sm:justify-between"
               >
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-gray-900">
@@ -126,12 +127,10 @@ export default async function ColegioDetallePage({
                       !admin.activo
                     )}
                   >
-                    <button
-                      type="submit"
-                      className="text-xs font-medium text-[#54A6D8] underline"
-                    >
-                      {admin.activo ? "Desactivar" : "Reactivar"}
-                    </button>
+                    <BotonSubmit
+                      label={admin.activo ? "Desactivar" : "Reactivar"}
+                      variante="gris"
+                    />
                   </form>
                   <EliminarAdminButton usuarioId={admin.id} />
                 </div>
@@ -164,7 +163,7 @@ export default async function ColegioDetallePage({
           {funcionarios.map((funcionario) => (
             <div
               key={funcionario.id}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-100 p-3"
+              className="flex flex-col gap-3 rounded-lg border border-gray-100 p-3 sm:flex-row sm:items-center sm:justify-between"
             >
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-gray-900">
@@ -187,12 +186,10 @@ export default async function ColegioDetallePage({
                     !funcionario.activo
                   )}
                 >
-                  <button
-                    type="submit"
-                    className="text-xs font-medium text-[#54A6D8] underline"
-                  >
-                    {funcionario.activo ? "Desactivar" : "Reactivar"}
-                  </button>
+                  <BotonSubmit
+                    label={funcionario.activo ? "Desactivar" : "Reactivar"}
+                    variante="gris"
+                  />
                 </form>
                 <EliminarFuncionarioButton usuarioId={funcionario.id} />
               </div>
@@ -228,7 +225,7 @@ export default async function ColegioDetallePage({
           {apoderados.map((apoderado) => (
             <div
               key={apoderado.id}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-100 p-3"
+              className="flex flex-col gap-3 rounded-lg border border-gray-100 p-3 sm:flex-row sm:items-center sm:justify-between"
             >
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-gray-900">
@@ -259,12 +256,10 @@ export default async function ColegioDetallePage({
                         !apoderado.activo
                       )}
                     >
-                      <button
-                        type="submit"
-                        className="text-xs font-medium text-[#54A6D8] underline"
-                      >
-                        {apoderado.activo ? "Desactivar" : "Reactivar"}
-                      </button>
+                      <BotonSubmit
+                        label={apoderado.activo ? "Desactivar" : "Reactivar"}
+                        variante="gris"
+                      />
                     </form>
                     <EliminarApoderadoButton usuarioId={apoderado.id} />
                   </>
