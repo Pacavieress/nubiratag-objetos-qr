@@ -6,10 +6,12 @@ import { VolverLink } from "@/components/volver-link";
 import { requireAccesoColegio, desactivarAdmin } from "../actions";
 import { EliminarAdminButton } from "../eliminar-admin-button";
 import { EliminarFuncionarioButton } from "../eliminar-funcionario-button";
+import { EliminarApoderadoButton } from "../eliminar-apoderado-button";
 import { NombreColegioForm } from "../nombre-colegio-form";
 import { CodigoColegioForm } from "../codigo-colegio-form";
 import { AdminColegioForm } from "../admin-colegio-form";
 import { cambiarActivoFuncionario } from "../funcionario-actions";
+import { cambiarActivoApoderado } from "../apoderado-actions";
 import { CrearFuncionarioForm } from "../crear-funcionario-form";
 
 export default async function ColegioDetallePage({
@@ -234,10 +236,40 @@ export default async function ColegioDetallePage({
                 </p>
                 <p className="text-xs text-gray-500">{apoderado.email}</p>
               </div>
-              <span className="text-xs text-gray-500">
-                {apoderado._count.hijos} estudiante
-                {apoderado._count.hijos === 1 ? "" : "s"}
-              </span>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-500">
+                  {apoderado._count.hijos} estudiante
+                  {apoderado._count.hijos === 1 ? "" : "s"}
+                </span>
+                {!esSuperAdmin && (
+                  <>
+                    <span
+                      className={`text-xs font-medium ${
+                        apoderado.activo
+                          ? "text-emerald-700"
+                          : "text-gray-400"
+                      }`}
+                    >
+                      {apoderado.activo ? "Activo" : "Inactivo"}
+                    </span>
+                    <form
+                      action={cambiarActivoApoderado.bind(
+                        null,
+                        apoderado.id,
+                        !apoderado.activo
+                      )}
+                    >
+                      <button
+                        type="submit"
+                        className="text-xs font-medium text-[#54A6D8] underline"
+                      >
+                        {apoderado.activo ? "Desactivar" : "Reactivar"}
+                      </button>
+                    </form>
+                    <EliminarApoderadoButton usuarioId={apoderado.id} />
+                  </>
+                )}
+              </div>
             </div>
           ))}
           {apoderados.length === 0 && (
