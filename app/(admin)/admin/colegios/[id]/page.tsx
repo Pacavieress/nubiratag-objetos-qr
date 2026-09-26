@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { VolverLink } from "@/components/volver-link";
 import { requireAccesoColegio, desactivarAdmin } from "../actions";
 import { EliminarAdminButton } from "../eliminar-admin-button";
+import { EliminarFuncionarioButton } from "../eliminar-funcionario-button";
 import { NombreColegioForm } from "../nombre-colegio-form";
 import { CodigoColegioForm } from "../codigo-colegio-form";
 import { AdminColegioForm } from "../admin-colegio-form";
@@ -191,6 +192,7 @@ export default async function ColegioDetallePage({
                     {funcionario.activo ? "Desactivar" : "Reactivar"}
                   </button>
                 </form>
+                <EliminarFuncionarioButton usuarioId={funcionario.id} />
               </div>
             </div>
           ))}

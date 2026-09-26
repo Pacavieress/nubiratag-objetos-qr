@@ -130,3 +130,12 @@ export async function cambiarActivoFuncionario(
 
   revalidatePath(`/admin/colegios/${usuario.colegioId}`);
 }
+
+export async function eliminarFuncionario(usuarioId: number) {
+  const alcance = await resolverAlcanceColegio();
+  const usuario = await verificarPropiedadFuncionario(usuarioId, alcance);
+
+  await prisma.usuario.delete({ where: { id: usuarioId } });
+
+  revalidatePath(`/admin/colegios/${usuario.colegioId}`);
+}
