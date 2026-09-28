@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { notFound, redirect } from "next/navigation";
+import { redirect } from "next/navigation";
 
 import { prisma } from "@/lib/db";
 
@@ -15,7 +15,29 @@ export default async function VerificarPage({
   });
 
   if (!usuario) {
-    notFound();
+    return (
+      <main className="mx-auto flex h-dvh max-w-sm flex-col items-center justify-center px-6 text-center">
+        <h1 className="text-xl font-semibold text-gray-900">
+          Enlace no válido
+        </h1>
+        <p className="mt-2 text-sm text-gray-500">
+          Este enlace ya fue usado o no es válido. Si ya verificaste tu
+          correo, inicia sesión.
+        </p>
+        <Link
+          href="/login"
+          className="mt-6 text-sm font-medium text-[#54A6D8] hover:underline"
+        >
+          Iniciar sesión
+        </Link>
+        <Link
+          href="/reenviar-verificacion"
+          className="mt-2 text-sm text-gray-400 hover:underline"
+        >
+          Pedir un enlace nuevo
+        </Link>
+      </main>
+    );
   }
 
   if (usuario.emailVerificado) {
