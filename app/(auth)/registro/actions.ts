@@ -86,11 +86,26 @@ export async function registrarApoderado(
     throw error;
   }
 
-  await enviarCorreoVerificacion({
-    destinatario: email,
-    nombre,
-    token: tokenVerificacion,
-  });
+  // El usuario ya quedó creado arriba — un fallo de envío (SMTP, o lo
+  // que rompió en producción con sharp/staticmaps) no debe tirar la
+  // pantalla genérica de error ni dejar la cuenta "colgada": se redirige
+  // igual a /registro/exito. Contras conocidas de esto: si el correo no
+  // sale, hoy no hay ningún flujo de "reenviar verificación" en la app
+  // (ver verificar/[token]/page.tsx — solo consume el token, no lo
+  // regenera), así que ese usuario queda sin forma de verificarse desde
+  // la UI hasta que se resuelva a mano.
+  try {
+    await enviarCorreoVerificacion({
+      destinatario: email,
+      nombre,
+      token: tokenVerificacion,
+    });
+  } catch (error) {
+    console.error(
+      `No se pudo enviar el correo de verificación a ${email}:`,
+      error
+    );
+  }
 
   redirect("/registro/exito");
 }
