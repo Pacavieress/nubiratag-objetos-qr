@@ -1,5 +1,7 @@
 import nodemailer from "nodemailer";
 
+import { generarMapaEstatico } from "./mapa-estatico";
+
 // Mismo servidor SMTP que usa Nubira.cl.
 const transporter = nodemailer.createTransport({
   host: "smtp.hostinger.com",
@@ -175,6 +177,18 @@ function botonMapa(latitud: number | null, longitud: number | null): string {
   </div>`;
 }
 
+// El <img> va aparte de botonMapa(): depende de si el adjunto cid: se
+// generó con éxito (puede fallar aunque haya coordenadas — timeout, tile
+// server caído), no solo de si hay latitud/longitud. Si no se pudo
+// generar, no se renderiza nada — el correo queda igual que sin esta
+// feature, sin ícono de imagen rota.
+function imagenMapaEstatico(mostrar: boolean, ubicacion: string): string {
+  if (!mostrar) return "";
+  return `<div style="margin:16px 0 0 0; text-align:center;">
+    <img src="cid:mapa-hallazgo" alt="Mapa de ubicación: ${escapeHtml(ubicacion)}" width="400" style="display:block; margin:0 auto; max-width:100%; height:auto; border-radius:8px;" />
+  </div>`;
+}
+
 function plantillaHallazgo(opts: {
   nombreEstudiante: string;
   etiqueta: string | null;
@@ -185,6 +199,7 @@ function plantillaHallazgo(opts: {
   codigoRetiro: string;
   latitud: number | null;
   longitud: number | null;
+  mostrarMapaImagen: boolean;
 }): string {
   const objeto = opts.etiqueta ? escapeHtml(opts.etiqueta) : "un objeto";
   const fechaTexto = opts.fecha.toLocaleString("es-CL", {
@@ -226,6 +241,7 @@ function plantillaHallazgo(opts: {
                     ? `<p style="margin:12px 0 0 0; font-size:14px; line-height:1.5; color:#4b5563;">Nota del funcionario: ${escapeHtml(opts.nota)}</p>`
                     : ""
                 }
+                ${imagenMapaEstatico(opts.mostrarMapaImagen, opts.ubicacion)}
                 ${botonMapa(opts.latitud, opts.longitud)}
               </td>
             </tr>
@@ -249,11 +265,25 @@ export async function enviarCorreoHallazgo(opts: {
   latitud: number | null;
   longitud: number | null;
 }): Promise<void> {
+  // Si falla (o no hay coordenadas), mapaBuffer queda null y el correo
+  // se manda igual, solo sin el <img> ni el adjunto — generarMapaEstatico
+  // nunca lanza.
+  const mapaBuffer =
+    opts.latitud != null && opts.longitud != null
+      ? await generarMapaEstatico(opts.latitud, opts.longitud)
+      : null;
+
   await transporter.sendMail({
     from: process.env.SMTP_FROM,
     to: opts.destinatario,
     subject: `Encontramos un objeto de ${opts.nombreEstudiante}`,
-    html: plantillaHallazgo(opts),
+    html: plantillaHallazgo({
+      ...opts,
+      mostrarMapaImagen: mapaBuffer !== null,
+    }),
+    attachments: mapaBuffer
+      ? [{ filename: "mapa.png", content: mapaBuffer, cid: "mapa-hallazgo" }]
+      : undefined,
   });
 }
 
