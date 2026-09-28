@@ -1,3 +1,5 @@
+import { redirect } from "next/navigation";
+import type { RolUsuario } from "@prisma/client";
 import {
   Backpack,
   BookOpen,
@@ -10,8 +12,20 @@ import {
   Shirt,
 } from "lucide-react";
 
+import { auth } from "@/lib/auth";
 import { LockScroll } from "@/components/lock-scroll";
 import { LoginForm } from "./login-form";
+
+// admin y superadmin comparten panel (/admin/**, ver proxy.ts); el resto
+// de la app también asume 1 rol = 1 panel. Record<RolUsuario, ...> exige
+// los 4 roles: no hace falta (ni conviene) un fallback que pueda
+// redirigir /login -> /login.
+const PANEL_POR_ROL: Record<RolUsuario, string> = {
+  apoderado: "/apoderado",
+  funcionario: "/funcionario",
+  admin: "/admin",
+  superadmin: "/admin",
+};
 
 // Posiciones fijas (no random en render, para que login y registro se
 // vean idénticos y no haya hydration mismatch). Objetos escolares típicos;
@@ -86,6 +100,13 @@ export default async function LoginPage({
   searchParams: Promise<{ verificado?: string }>;
 }) {
   const { verificado } = await searchParams;
+
+  // Sesión ya válida (ej. se abrió la PWA instalada, start_url /login):
+  // directo al panel del rol en vez de mostrar el formulario de nuevo.
+  const session = await auth();
+  if (session?.user?.rol) {
+    redirect(PANEL_POR_ROL[session.user.rol]);
+  }
 
   return (
     <main className="relative isolate flex h-dvh w-full overflow-hidden overscroll-none">
