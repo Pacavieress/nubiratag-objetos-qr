@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { prisma } from "@/lib/db";
@@ -31,9 +32,14 @@ export default async function VerificarPage({
           Enlace vencido
         </h1>
         <p className="mt-2 text-sm text-gray-500">
-          Este enlace de verificación ya venció. Vuelve a registrarte para
-          recibir uno nuevo.
+          Este enlace de verificación ya venció.
         </p>
+        <Link
+          href="/reenviar-verificacion"
+          className="mt-6 text-sm font-medium text-[#54A6D8] hover:underline"
+        >
+          Pedir un enlace nuevo
+        </Link>
       </main>
     );
   }
