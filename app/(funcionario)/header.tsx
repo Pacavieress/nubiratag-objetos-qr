@@ -46,14 +46,13 @@ export function Header({
                 {ROL_LABEL[rol]}
               </span>
             )}
+            <NombreColegio
+              nombre={nombreColegio}
+              className="ml-auto max-w-[55vw] text-xs text-gray-400 lg:hidden"
+            />
           </div>
         )}
       </div>
-      {nombreColegio && (
-        <div className="px-6 pb-2 lg:hidden">
-          <NombreColegio nombre={nombreColegio} className="text-xs text-gray-400" />
-        </div>
-      )}
     </header>
   );
 }
