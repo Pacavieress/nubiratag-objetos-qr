@@ -11,17 +11,29 @@ const ROL_LABEL: Record<RolUsuario, string> = {
 
 export function Header({
   email,
+  nombre,
   rol,
   nombreColegio,
 }: {
   email: string | null | undefined;
+  nombre: string | null | undefined;
   rol: RolUsuario | null | undefined;
   nombreColegio: string | null;
 }) {
+  // Prioriza el primer nombre real (Usuario.nombre, vía session.user.name)
+  // sobre la parte del email — el email solo queda como respaldo para
+  // cuentas que por algún motivo no tengan nombre cargado.
+  const primerNombre = nombre?.trim().split(/\s+/)[0];
+  const nombreDesdeUsuario = primerNombre
+    ? primerNombre.charAt(0).toUpperCase() + primerNombre.slice(1)
+    : undefined;
+
   const usuario = email?.split("@")[0];
-  const usuarioCapitalizado = usuario
+  const nombreDesdeEmail = usuario
     ? usuario.charAt(0).toUpperCase() + usuario.slice(1)
     : usuario;
+
+  const nombreAMostrar = nombreDesdeUsuario ?? nombreDesdeEmail;
 
   return (
     <header className="border-b border-gray-100 bg-white print:hidden">
@@ -36,10 +48,10 @@ export function Header({
             className="text-sm font-medium text-gray-500"
           />
         </div>
-        {usuarioCapitalizado && (
+        {nombreAMostrar && (
           <div className="ml-auto text-right">
             <span className="block text-sm font-bold text-gray-600">
-              {usuarioCapitalizado}
+              {nombreAMostrar}
             </span>
             {rol && (
               <span className="block text-xs text-gray-400">

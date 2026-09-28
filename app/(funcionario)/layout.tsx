@@ -25,6 +25,7 @@ export default async function FuncionarioLayout({
       <div className="flex min-h-0 flex-1 flex-col">
         <Header
           email={session?.user?.email}
+          nombre={session?.user?.name}
           rol={session?.user?.rol}
           nombreColegio={nombreColegio}
         />
