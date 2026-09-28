@@ -37,7 +37,7 @@ export function Header({
 
   return (
     <header className="border-b border-gray-100 bg-white print:hidden">
-      <div className="flex items-center justify-between px-6 py-3">
+      <div className="flex items-center justify-between px-6 py-1.5 lg:py-2">
         <p className="text-xl font-bold sm:text-2xl lg:hidden">
           <span className="text-[#2c7bc0]">Nubira</span>
           <span className="text-[#ff914d]">Tag</span>
@@ -49,18 +49,18 @@ export function Header({
           />
         </div>
         {nombreAMostrar && (
-          <div className="ml-auto text-right">
-            <span className="block text-sm font-bold text-gray-600">
+          <div className="ml-auto text-right leading-tight">
+            <span className="block text-[13px] font-bold text-gray-600">
               {nombreAMostrar}
             </span>
             {rol && (
-              <span className="block text-xs text-gray-400">
+              <span className="block text-[11px] text-gray-400">
                 {ROL_LABEL[rol]}
               </span>
             )}
             <NombreColegio
               nombre={nombreColegio}
-              className="ml-auto max-w-[55vw] text-xs text-gray-400 lg:hidden"
+              className="ml-auto max-w-[55vw] text-[11px] text-gray-400 lg:hidden"
             />
           </div>
         )}
