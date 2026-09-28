@@ -163,7 +163,7 @@ export default async function LoginPage({
 
       {/* Formulario: ancho completo en mobile, mitad derecha en desktop */}
       <div className="flex h-full w-full flex-col overflow-y-auto overscroll-contain bg-white/95 lg:w-1/2 lg:bg-white">
-        <div className="mx-auto flex w-full max-w-[320px] flex-1 flex-col justify-center px-6 py-12">
+        <div className="mx-auto flex w-full max-w-[320px] flex-1 flex-col justify-start px-6 pt-6 pb-12 lg:justify-center lg:pt-12">
           {/* Tagline: solo mobile, arriba del logo */}
           <div className="mb-4 text-center lg:hidden">
             <p className="text-xs font-medium leading-snug text-gray-600">
