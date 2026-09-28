@@ -60,7 +60,7 @@ export function BottomNav({ esSuperAdmin }: { esSuperAdmin: boolean }) {
   if (tecladoAbierto) return null;
 
   return (
-    <nav className="shrink-0 border-t border-gray-100 bg-white pb-[env(safe-area-inset-bottom)] pt-2 md:hidden print:hidden">
+    <nav className="shrink-0 border-t border-gray-100 bg-white pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] pt-2 md:hidden print:hidden">
       <ul
         className="grid"
         style={{
