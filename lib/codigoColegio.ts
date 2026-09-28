@@ -1,8 +1,15 @@
 import { randomInt } from "crypto";
 
-// 6 dígitos, guardado como string para no perder ceros a la izquierda.
-const LARGO_CODIGO = 6;
+// Mismo alfabeto que lib/codigoRetiro.ts: sin 0/O ni 1/I/L (ambiguos al
+// leerlos en voz alta o escritos a mano). 31 símbolos, 8 caracteres:
+// ~852 mil millones de combinaciones.
+const ALFABETO = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
+const LARGO_CODIGO = 8;
 
 export function generarCodigoColegio(): string {
-  return String(randomInt(10 ** LARGO_CODIGO)).padStart(LARGO_CODIGO, "0");
+  let codigo = "";
+  for (let i = 0; i < LARGO_CODIGO; i++) {
+    codigo += ALFABETO[randomInt(ALFABETO.length)];
+  }
+  return codigo;
 }

@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { randomBytes } from "crypto";
+import { headers } from "next/headers";
 import bcrypt from "bcryptjs";
 import { Prisma } from "@prisma/client";
 
@@ -12,6 +13,43 @@ import { enviarCorreoVerificacion } from "@/lib/email";
 const BCRYPT_COST = 12;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Rate limit en memoria, capa 1 (mismo criterio que
+// funcionario/entregar/actions.ts y reenviar-verificacion/actions.ts) —
+// acá por IP, no por usuario/email, porque todavía no hay cuenta ni
+// sesión en este punto. Solo cuenta intentos con código de colegio
+// inválido: no penaliza a alguien que se equivoca en el nombre o la
+// contraseña, solo a quien está adivinando códigos.
+const INTENTOS_MAXIMOS = 3;
+const VENTANA_INTENTOS_MS = 15 * 60 * 1000;
+const intentosFallidosPorIp = new Map<
+  string,
+  { intentos: number; desde: number }
+>();
+
+async function obtenerIp(): Promise<string> {
+  const listaHeaders = await headers();
+  const forwarded = listaHeaders.get("x-forwarded-for");
+  return forwarded?.split(",")[0]?.trim() || "desconocida";
+}
+
+function limiteAlcanzado(ip: string): boolean {
+  const registro = intentosFallidosPorIp.get(ip);
+  if (!registro) return false;
+  if (Date.now() - registro.desde > VENTANA_INTENTOS_MS) return false;
+  return registro.intentos >= INTENTOS_MAXIMOS;
+}
+
+function registrarIntentoFallido(ip: string) {
+  const ahora = Date.now();
+  const registro = intentosFallidosPorIp.get(ip);
+
+  if (!registro || ahora - registro.desde > VENTANA_INTENTOS_MS) {
+    intentosFallidosPorIp.set(ip, { intentos: 1, desde: ahora });
+    return;
+  }
+  registro.intentos += 1;
+}
+
 export async function registrarApoderado(
   _prevState: string | undefined,
   formData: FormData
@@ -20,6 +58,9 @@ export async function registrarApoderado(
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const password = String(formData.get("password") ?? "");
   const confirmarPassword = String(formData.get("confirmarPassword") ?? "");
+  const codigoColegio = String(formData.get("codigoColegio") ?? "")
+    .trim()
+    .toUpperCase();
 
   if (!nombre) {
     return "Ingresa tu nombre.";
@@ -37,19 +78,30 @@ export async function registrarApoderado(
     return "Las contraseñas no coinciden.";
   }
 
+  if (!codigoColegio) {
+    return "Ingresa el código de tu colegio.";
+  }
+
   const existente = await prisma.usuario.findUnique({ where: { email } });
   if (existente) {
     return "Este correo ya está registrado.";
   }
 
-  // TODO: hoy hay un solo colegio (Colegio San Ejemplo), así que el
-  // registro se autoasigna al primero que exista. Cuando haya
-  // multi-colegio, reemplazar por una selección explícita (código de
-  // registro, subdominio, etc.) — Google OAuth también queda pendiente
-  // para esa misma etapa.
-  const colegio = await prisma.colegio.findFirst({ orderBy: { id: "asc" } });
-  if (!colegio) {
-    return "No hay ningún colegio configurado todavía. Contacta al administrador.";
+  const ip = await obtenerIp();
+  if (limiteAlcanzado(ip)) {
+    return "Demasiados intentos. Espera unos minutos y vuelve a intentar.";
+  }
+
+  // Un solo mensaje genérico sin distinguir "el código no existe" de "el
+  // colegio cerró su registro" — mismo criterio de no revelar que ya usa
+  // el resto de la app (login, /q/[token], etc.).
+  const colegio = await prisma.colegio.findUnique({
+    where: { codigoRegistro: codigoColegio },
+  });
+
+  if (!colegio || !colegio.registroActivo) {
+    registrarIntentoFallido(ip);
+    return "Código de colegio inválido.";
   }
 
   const passwordHash = await bcrypt.hash(password, BCRYPT_COST);
@@ -90,10 +142,7 @@ export async function registrarApoderado(
   // que rompió en producción con sharp/staticmaps) no debe tirar la
   // pantalla genérica de error ni dejar la cuenta "colgada": se redirige
   // igual a /registro/exito. Contras conocidas de esto: si el correo no
-  // sale, hoy no hay ningún flujo de "reenviar verificación" en la app
-  // (ver verificar/[token]/page.tsx — solo consume el token, no lo
-  // regenera), así que ese usuario queda sin forma de verificarse desde
-  // la UI hasta que se resuelva a mano.
+  // sale, hoy hay /reenviar-verificacion para pedir uno nuevo.
   try {
     await enviarCorreoVerificacion({
       destinatario: email,

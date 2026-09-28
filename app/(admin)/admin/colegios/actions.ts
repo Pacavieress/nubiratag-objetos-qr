@@ -298,3 +298,56 @@ export async function actualizarCodigoRegistro(
 
   return { guardado: true };
 }
+
+// Genera un código nuevo y reemplaza el actual — invalida cualquier
+// enlace/código ya repartido a apoderados que todavía no se hayan
+// registrado con el viejo. Mismo patrón retry-on-colisión que
+// crearColegioConCodigoUnico.
+export async function regenerarCodigoRegistro(colegioId: number) {
+  await requireSuperAdmin();
+
+  for (let intento = 1; intento <= MAX_INTENTOS_CODIGO; intento++) {
+    const codigoRegistro = generarCodigoColegio();
+    try {
+      await prisma.colegio.update({
+        where: { id: colegioId },
+        data: { codigoRegistro },
+      });
+      revalidatePath("/admin/colegios");
+      revalidatePath(`/admin/colegios/${colegioId}`);
+      return;
+    } catch (error) {
+      const esColisionDeCodigo =
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002" &&
+        (error.meta?.target as string[] | undefined)?.includes(
+          "codigo_registro"
+        );
+
+      if (!esColisionDeCodigo) {
+        throw error;
+      }
+      // Colisión (astronómicamente improbable con 8 caracteres):
+      // reintenta con otro código.
+    }
+  }
+
+  throw new Error(
+    `No se pudo generar un código de registro único tras ${MAX_INTENTOS_CODIGO} intentos.`
+  );
+}
+
+export async function cambiarRegistroActivo(
+  colegioId: number,
+  activo: boolean
+) {
+  await requireSuperAdmin();
+
+  await prisma.colegio.update({
+    where: { id: colegioId },
+    data: { registroActivo: activo },
+  });
+
+  revalidatePath("/admin/colegios");
+  revalidatePath(`/admin/colegios/${colegioId}`);
+}

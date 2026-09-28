@@ -86,6 +86,7 @@ export default async function ColegioDetallePage({
           <CodigoColegioForm
             colegioId={colegio.id}
             codigoInicial={colegio.codigoRegistro}
+            registroActivo={colegio.registroActivo}
           />
         </section>
       )}

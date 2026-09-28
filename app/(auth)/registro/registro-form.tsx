@@ -10,6 +10,7 @@ import {
   Loader2,
   Lock,
   Mail,
+  School,
   User,
 } from "lucide-react";
 
@@ -24,6 +25,29 @@ export function RegistroForm() {
 
   return (
     <form action={formAction} className="space-y-4">
+      <div className="flex flex-col gap-1.5">
+        <label
+          htmlFor="codigoColegio"
+          className="text-xs font-medium tracking-wide text-gray-500"
+        >
+          CÓDIGO DE TU COLEGIO
+        </label>
+        <div className="relative">
+          <School className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+          <input
+            id="codigoColegio"
+            name="codigoColegio"
+            type="text"
+            required
+            autoCapitalize="characters"
+            className="w-full rounded-lg border border-gray-300 bg-gray-50 py-3 pl-10 pr-4 text-[16px] uppercase tracking-widest transition-colors focus:border-[#54A6D8] focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#54A6D8]"
+          />
+        </div>
+        <p className="text-xs text-gray-400">
+          Te lo entrega el colegio.
+        </p>
+      </div>
+
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor="nombre"
