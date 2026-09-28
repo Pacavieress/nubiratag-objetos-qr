@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 
 import { auth } from "@/lib/auth";
+import { esperar } from "@/lib/esperar";
 import { LockScroll } from "@/components/lock-scroll";
 import { LoginForm } from "./login-form";
 
@@ -103,7 +104,9 @@ export default async function LoginPage({
 
   // Sesión ya válida (ej. se abrió la PWA instalada, start_url /login):
   // directo al panel del rol en vez de mostrar el formulario de nuevo.
-  const session = await auth();
+  // Piso de 700ms en paralelo con auth(), mismo criterio que
+  // app/page.tsx — ver lib/esperar.ts.
+  const [session] = await Promise.all([auth(), esperar(700)]);
   if (session?.user?.rol) {
     redirect(PANEL_POR_ROL[session.user.rol]);
   }

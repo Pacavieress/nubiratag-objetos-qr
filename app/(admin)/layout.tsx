@@ -4,6 +4,7 @@ import { Header } from "./header";
 import { BottomNav } from "./bottom-nav";
 import { LockScroll } from "@/components/lock-scroll";
 import { obtenerNombreColegioSesion } from "@/lib/colegioSesion";
+import { esperar } from "@/lib/esperar";
 
 // La autorización de rol ya la resuelve proxy.ts (matcher /admin/:path*)
 // antes de que se llegue a renderizar este layout. Acá solo se usa
@@ -17,11 +18,20 @@ export default async function AdminLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const session = await auth();
-  const esSuperAdmin = session?.user?.rol === "superadmin";
-  const nombreColegio = await obtenerNombreColegioSesion(
-    session?.user?.colegioId
-  );
+  // nombreColegio depende de session (necesita colegioId), así que el
+  // trío va como una sola unidad secuencial corriendo en paralelo con el
+  // piso de 700ms — mismo criterio que app/page.tsx, ver lib/esperar.ts.
+  const [{ session, esSuperAdmin, nombreColegio }] = await Promise.all([
+    (async () => {
+      const session = await auth();
+      const esSuperAdmin = session?.user?.rol === "superadmin";
+      const nombreColegio = await obtenerNombreColegioSesion(
+        session?.user?.colegioId
+      );
+      return { session, esSuperAdmin, nombreColegio };
+    })(),
+    esperar(700),
+  ]);
 
   return (
     <div className="flex h-dvh w-full flex-col overflow-hidden overscroll-none bg-gray-50 md:flex-row">
