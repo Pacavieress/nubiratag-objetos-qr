@@ -84,9 +84,10 @@ model Usuario {
 
   colegio Colegio? @relation(fields: [colegioId], references: [id])
 
-  hijos               Estudiante[] @relation("ApoderadoDeEstudiante")
-  hallazgosReportados Hallazgo[]   @relation("HallazgoReportadoPor")
-  hallazgosRetirados  Hallazgo[]   @relation("HallazgoRetiradoPor")
+  hijos               Estudiante[]      @relation("ApoderadoDeEstudiante")
+  hallazgosReportados Hallazgo[]        @relation("HallazgoReportadoPor")
+  hallazgosRetirados  Hallazgo[]        @relation("HallazgoRetiradoPor")
+  suscripcionesPush   SuscripcionPush[]
 
   @@index([colegioId])
   @@map("usuario")
@@ -196,4 +197,28 @@ model Notificacion {
 
   @@index([hallazgoId])
   @@map("notificacion")
+}
+
+// Suscripción Web Push (VAPID) de un usuario/dispositivo. No lleva un
+// campo "canal": el registro de intentos de envío sigue viviendo en
+// Notificacion (canal = "web", valor del enum CanalNotificacion que ya
+// existía sin uso) tal como ya pasa con "email" — esta tabla solo guarda
+// el endpoint y las claves para poder enviar, no el historial de envíos.
+model SuscripcionPush {
+  id          Int      @id @default(autoincrement())
+  usuarioId   Int      @map("usuario_id")
+  endpoint    String   @unique @db.VarChar(500)
+  claveP256dh String   @map("clave_p256dh")
+  claveAuth   String   @map("clave_auth")
+  userAgent   String?  @map("user_agent")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  // Cascade (no RESTRICT/SET NULL como el resto de las FK del schema):
+  // una suscripción no tiene sentido sin su usuario, si se borra el
+  // usuario (ya pasa hoy en eliminarAdmin) las suscripciones deben irse
+  // con él.
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@index([usuarioId])
+  @@map("suscripcion_push")
 }
