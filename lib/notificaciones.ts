@@ -2,6 +2,7 @@ import { Prisma, type CanalNotificacion } from "@prisma/client";
 
 import { prisma } from "@/lib/db";
 import { enviarCorreoRetiro } from "@/lib/email";
+import { enviarPush } from "@/lib/push";
 
 // Centraliza el patrón create-pendiente / intentar-enviar / marcar
 // resultado (antes vivía solo dentro de notificarHallazgo en
@@ -46,11 +47,42 @@ export async function registrarYEnviarNotificacion(opts: {
 type HallazgoParaRetiro = {
   qrCodigo: {
     etiqueta: string | null;
+    estudianteId: number;
     colegio: { nombre: string };
-    estudiante: { nombre: string; apoderado: { email: string } };
+    estudiante: {
+      nombre: string;
+      apoderado: { id: number; email: string };
+    };
   };
   ubicacion: { nombre: string; latitud: number | null; longitud: number | null };
 };
+
+// Compartido por notificarRetiro (acá abajo) y notificarHallazgo
+// (q/[token]/actions.ts) — misma página de destino en los dos casos: el
+// apoderado ve el hallazgo en el historial de /apoderado/estudiantes/[id],
+// no hay una URL "por hallazgo" separada. canal "web" es el mismo enum
+// CanalNotificacion que ya existía sin uso; registrarYEnviarNotificacion
+// ya contiene su propio try/catch (nunca lanza), y enviarPush tampoco
+// lanza (ver lib/push.ts) — doble seguro de que un fallo acá nunca se
+// propaga hacia quien llama.
+export async function notificarPush(
+  hallazgoId: number,
+  usuarioId: number,
+  estudianteId: number,
+  titulo: string
+): Promise<void> {
+  const url = `/apoderado/estudiantes/${estudianteId}`;
+
+  const datos = { titulo, cuerpo: "Toca para ver los detalles.", url };
+
+  await registrarYEnviarNotificacion({
+    hallazgoId,
+    canal: "web",
+    destinatario: String(usuarioId),
+    payload: { ...datos },
+    enviar: () => enviarPush(usuarioId, datos),
+  });
+}
 
 // Compartido por entregarObjeto (entregar/actions.ts) y marcarRetirado
 // (funcionario/hallazgos/actions.ts) — los dos únicos caminos que cierran
@@ -78,4 +110,15 @@ export async function notificarRetiro(
     payload: { ...datos },
     enviar: () => enviarCorreoRetiro({ destinatario, ...datos }),
   });
+
+  // Push después del correo, nunca antes ni en su lugar — ver el
+  // comentario de notificarPush sobre por qué esto no puede afectar el
+  // correo de arriba ni la transición de estado que ya ocurrió antes de
+  // llegar acá.
+  await notificarPush(
+    hallazgoId,
+    hallazgo.qrCodigo.estudiante.apoderado.id,
+    hallazgo.qrCodigo.estudianteId,
+    `Retiraron un objeto de ${hallazgo.qrCodigo.estudiante.nombre}`
+  );
 }

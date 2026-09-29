@@ -8,7 +8,7 @@ import { Prisma } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { enviarCorreoHallazgo } from "@/lib/email";
-import { registrarYEnviarNotificacion } from "@/lib/notificaciones";
+import { registrarYEnviarNotificacion, notificarPush } from "@/lib/notificaciones";
 import { generarCodigoRetiro } from "@/lib/codigoRetiro";
 
 // Decisión de producto: /q/[token] dejó de ser pública. Solo funcionario
@@ -200,6 +200,15 @@ export async function registrarHallazgo(
     latitud: ubicacion.latitud,
     longitud: ubicacion.longitud,
   });
+
+  // Push después del correo, nunca antes ni en su lugar — ver el
+  // comentario de notificarPush en lib/notificaciones.ts.
+  await notificarPush(
+    hallazgo.id,
+    qr.estudiante.apoderado.id,
+    qr.estudianteId,
+    `Encontraron un objeto de ${qr.estudiante.nombre}`
+  );
 
   revalidatePath(`/q/${qr.token}`);
 
