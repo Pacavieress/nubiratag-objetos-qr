@@ -39,3 +39,40 @@ self.addEventListener("fetch", (event) => {
     )
   );
 });
+
+// Payload lo arma lib/push.ts (JSON.stringify({ title, body, url })) —
+// bajo nuestro control, no hace falta validar la forma más allá de que
+// exista event.data.
+self.addEventListener("push", (event) => {
+  if (!event.data) return;
+
+  const datos = event.data.json();
+
+  event.waitUntil(
+    self.registration.showNotification(datos.title, {
+      body: datos.body,
+      icon: "/icons/icon-192.png",
+      badge: "/icons/icon-192.png",
+      data: { url: datos.url },
+    })
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+
+  const url = new URL(
+    event.notification.data?.url ?? "/",
+    self.location.origin
+  ).href;
+
+  event.waitUntil(
+    clients
+      .matchAll({ type: "window", includeUncontrolled: true })
+      .then((lista) => {
+        const existente = lista.find((cliente) => cliente.url === url);
+        if (existente) return existente.focus();
+        return clients.openWindow(url);
+      })
+  );
+});

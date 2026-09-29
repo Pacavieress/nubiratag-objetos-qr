@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { ActivarNotificacionesPush } from "../activar-notificaciones-push";
 
 export default async function EstudiantesPage() {
   const session = await auth();
@@ -14,6 +15,10 @@ export default async function EstudiantesPage() {
 
   return (
     <main className="mx-auto flex max-w-2xl flex-col gap-6">
+      <ActivarNotificacionesPush
+        vapidPublicKey={process.env.VAPID_PUBLIC_KEY ?? null}
+      />
+
       <h1 className="text-xl font-semibold text-gray-900">Mis estudiantes</h1>
 
       <div className="flex flex-col gap-3">
