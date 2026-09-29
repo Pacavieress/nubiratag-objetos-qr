@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { Bell, BellOff, Share } from "lucide-react";
+import { Bell, Share } from "lucide-react";
 
 import { guardarSuscripcion, eliminarSuscripcion } from "./push-actions";
 
@@ -12,6 +12,9 @@ type Estado =
   | "permiso-denegado"
   | "inactivo"
   | "activo";
+
+const DESCARTADO_KEY = "nubiratag:push-descartado";
+const DESCARTADO_DIAS_MS = 7 * 24 * 60 * 60 * 1000;
 
 // Boilerplate estándar para pasar la clave pública VAPID (base64url) al
 // formato que pide PushManager.subscribe. El cast a BufferSource evita un
@@ -64,18 +67,48 @@ async function calcularEstado(vapidPublicKey: string | null): Promise<Estado> {
   }
 }
 
+// try/catch porque localStorage puede lanzar (navegación privada, sitio
+// bloqueado) — degradación aceptable: si falla, el aviso simplemente
+// vuelve a aparecer en la próxima carga, no rompe nada.
+function leerDescartadoReciente(): boolean {
+  try {
+    const valor = localStorage.getItem(DESCARTADO_KEY);
+    if (!valor) return false;
+    const descartadoEn = Number(valor);
+    return (
+      Number.isFinite(descartadoEn) &&
+      Date.now() - descartadoEn < DESCARTADO_DIAS_MS
+    );
+  } catch {
+    return false;
+  }
+}
+
+function guardarDescartado(): void {
+  try {
+    localStorage.setItem(DESCARTADO_KEY, String(Date.now()));
+  } catch {
+    // Ver comentario de leerDescartadoReciente.
+  }
+}
+
 export function ActivarNotificacionesPush({
   vapidPublicKey,
 }: {
   vapidPublicKey: string | null;
 }) {
   const [estado, setEstado] = useState<Estado>("cargando");
+  // Inicializador perezoso (no un setState en el efecto): localStorage no
+  // existe en el render del servidor, pero leerDescartadoReciente ya
+  // devuelve false ahí (su try/catch atrapa el ReferenceError) — mismo
+  // resultado que el cliente ve en su primer render, así que no hay
+  // mismatch de hidratación.
+  const [descartado, setDescartado] = useState(() => leerDescartadoReciente());
   const [pendiente, startTransition] = useTransition();
 
-  // Todos estos chequeos dependen de window/navigator — tienen que
-  // correr después del mount, nunca durante el render inicial (mismatch
-  // de hidratación con lo que sea que haya renderizado el servidor). El
-  // cálculo vive en calcularEstado() (fuera del componente) para que acá
+  // Todos estos chequeos dependen de window/navigator — tienen que correr
+  // después del mount, nunca durante el render inicial (mismatch de
+  // hidratación). calcularEstado vive fuera del componente para que acá
   // el único setEstado quede dentro de un .then(), no síncrono en el
   // cuerpo del efecto.
   useEffect(() => {
@@ -89,6 +122,21 @@ export function ActivarNotificacionesPush({
       cancelado = true;
     };
   }, [vapidPublicKey]);
+
+  const mostrarBanner =
+    !descartado && (estado === "inactivo" || estado === "ios-no-instalado");
+
+  // Transición de entrada del banner (baja desde arriba): arranca fuera
+  // de pantalla y se anima al frame siguiente a que mostrarBanner pase a
+  // true, en vez de aparecer de golpe ya en su posición final.
+  const [animarEntrada, setAnimarEntrada] = useState(false);
+
+  useEffect(() => {
+    const id = requestAnimationFrame(() =>
+      setAnimarEntrada(mostrarBanner)
+    );
+    return () => cancelAnimationFrame(id);
+  }, [mostrarBanner]);
 
   function activar() {
     startTransition(async () => {
@@ -117,6 +165,9 @@ export function ActivarNotificacionesPush({
           userAgent: navigator.userAgent,
         });
 
+        // Activar con éxito: el aviso desaparece y no vuelve a mostrarse
+        // (estado ya no es "inactivo"/"ios-no-instalado", así que
+        // mostrarBanner pasa a false solo).
         setEstado("activo");
       } catch (error) {
         console.error("No se pudo activar las notificaciones:", error);
@@ -142,7 +193,12 @@ export function ActivarNotificacionesPush({
     });
   }
 
-  if (estado === "cargando") {
+  function ahoraNo() {
+    guardarDescartado();
+    setDescartado(true);
+  }
+
+  if (estado === "cargando" || estado === "permiso-denegado") {
     return null;
   }
 
@@ -154,69 +210,70 @@ export function ActivarNotificacionesPush({
     );
   }
 
-  if (estado === "ios-no-instalado") {
+  if (estado === "activo") {
     return (
-      <div className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-6">
-        <div className="flex items-center gap-2">
-          <Bell className="h-5 w-5 text-gray-400" />
-          <p className="text-sm font-medium text-gray-900">
-            Activa las notificaciones
-          </p>
-        </div>
-        <p className="mt-2 text-sm text-gray-500">
-          Para recibir un aviso cuando encontremos un objeto, agrega
-          NubiraTag a tu pantalla de inicio: toca{" "}
-          <Share className="inline h-4 w-4 align-text-bottom" /> Compartir y
-          luego &quot;Agregar a inicio&quot;.
-        </p>
-      </div>
+      <p className="text-center">
+        <button
+          type="button"
+          onClick={desactivar}
+          disabled={pendiente}
+          className="text-xs text-gray-400 underline disabled:opacity-50"
+        >
+          {pendiente ? "..." : "Desactivar notificaciones"}
+        </button>
+      </p>
     );
   }
 
-  if (estado === "permiso-denegado") {
-    return (
-      <div className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-6">
-        <div className="flex items-center gap-2">
-          <BellOff className="h-5 w-5 text-gray-400" />
-          <p className="text-sm font-medium text-gray-900">
-            Notificaciones bloqueadas
-          </p>
-        </div>
-        <p className="mt-2 text-sm text-gray-500">
-          Bloqueaste los avisos de NubiraTag en tu navegador. Actívalos desde
-          la configuración del sitio para recibir un aviso apenas
-          encontremos un objeto.
-        </p>
-      </div>
-    );
+  if (!mostrarBanner) {
+    return null;
   }
 
   return (
-    <div className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-6">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <Bell className="h-5 w-5 shrink-0 text-gray-400" />
-          <div>
-            <p className="text-sm font-medium text-gray-900">
-              {estado === "activo"
-                ? "Notificaciones activas"
-                : "Activa las notificaciones"}
+    <div
+      className={`fixed inset-x-0 top-0 z-50 border-b border-gray-100 bg-white px-4 pb-3 shadow-sm transition-transform duration-300 ${
+        animarEntrada ? "translate-y-0" : "-translate-y-full"
+      }`}
+      style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top, 0px))" }}
+    >
+      <div className="mx-auto flex max-w-2xl items-start gap-3">
+        <Bell className="mt-0.5 h-5 w-5 shrink-0 text-[#54A6D8]" />
+        <div className="flex-1">
+          <p className="text-sm font-medium text-gray-900">
+            Activa las notificaciones
+          </p>
+          {estado === "ios-no-instalado" ? (
+            <p className="mt-1 text-sm text-gray-500">
+              Para recibir un aviso cuando encontremos un objeto, agrega
+              NubiraTag a tu pantalla de inicio: toca{" "}
+              <Share className="inline h-4 w-4 align-text-bottom" /> Compartir
+              y luego &quot;Agregar a inicio&quot;.
             </p>
-            <p className="text-sm text-gray-500">
-              {estado === "activo"
-                ? "Te avisamos apenas encontremos un objeto de tus hijos."
-                : "Recibe un aviso apenas encontremos un objeto de tus hijos."}
+          ) : (
+            <p className="mt-1 text-sm text-gray-500">
+              Recibe un aviso apenas encontremos un objeto de tus hijos.
             </p>
+          )}
+          <div className="mt-3 flex items-center gap-4">
+            {estado === "inactivo" && (
+              <button
+                type="button"
+                onClick={activar}
+                disabled={pendiente}
+                className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 transition hover:border-[#54A6D8] hover:text-[#54A6D8] disabled:opacity-50"
+              >
+                {pendiente ? "..." : "Activar"}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={ahoraNo}
+              className="text-sm font-medium text-gray-400"
+            >
+              Ahora no
+            </button>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={estado === "activo" ? desactivar : activar}
-          disabled={pendiente}
-          className="shrink-0 rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 transition hover:border-[#54A6D8] hover:text-[#54A6D8] disabled:opacity-50"
-        >
-          {pendiente ? "..." : estado === "activo" ? "Desactivar" : "Activar"}
-        </button>
       </div>
     </div>
   );

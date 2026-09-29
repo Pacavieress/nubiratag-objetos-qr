@@ -15,10 +15,6 @@ export default async function EstudiantesPage() {
 
   return (
     <main className="mx-auto flex max-w-2xl flex-col gap-6">
-      <ActivarNotificacionesPush
-        vapidPublicKey={process.env.VAPID_PUBLIC_KEY ?? null}
-      />
-
       <h1 className="text-xl font-semibold text-gray-900">Mis estudiantes</h1>
 
       <div className="flex flex-col gap-3">
@@ -54,6 +50,10 @@ export default async function EstudiantesPage() {
           </p>
         )}
       </div>
+
+      <ActivarNotificacionesPush
+        vapidPublicKey={process.env.VAPID_PUBLIC_KEY ?? null}
+      />
     </main>
   );
 }
