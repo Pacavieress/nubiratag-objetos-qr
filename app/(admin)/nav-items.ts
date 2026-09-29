@@ -1,4 +1,4 @@
-import { Building2, MapPin, type LucideIcon } from "lucide-react";
+import { Building2, MapPin, Video, type LucideIcon } from "lucide-react";
 
 export type NavItem = {
   href: string;
@@ -31,5 +31,11 @@ export const NAV_ITEMS: NavItem[] = [
     soloAdminColegio: true,
   },
   { href: "/admin/ubicaciones", label: "Ubicaciones", icon: MapPin },
+  {
+    href: "/admin/grabacion",
+    label: "Grabación",
+    icon: Video,
+    soloSuperAdmin: true,
+  },
   // Próximamente: Hallazgos (vista global).
 ];
