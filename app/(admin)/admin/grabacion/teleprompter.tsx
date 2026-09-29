@@ -21,6 +21,8 @@ const TAMANO_MIN = 20;
 const TAMANO_MAX = 120;
 const VELOCIDAD_MIN = 10;
 const VELOCIDAD_MAX = 300;
+const GANANCIA_MIN = 1;
+const GANANCIA_MAX = 6;
 
 type Dispositivo = { id: string; label: string };
 type Fase = "preparar" | "grabar";
@@ -49,6 +51,39 @@ function restriccionesAudio(
     channelCount: 1,
     sampleRate: 48000,
   };
+}
+
+type CadenaAudio = {
+  ctx: AudioContext;
+  gain: GainNode;
+  analyser: AnalyserNode;
+  destino: MediaStreamAudioDestinationNode;
+};
+
+// micrófono → ganancia → compresor (limitador suave) → destino.
+// El analizador cuelga después del compresor: mide lo mismo que se graba.
+function crearCadenaAudio(pista: MediaStream, ganancia: number): CadenaAudio {
+  const ctx = new AudioContext();
+  const gain = ctx.createGain();
+  gain.gain.value = ganancia;
+
+  const limitador = ctx.createDynamicsCompressor();
+  limitador.threshold.value = -6;
+  limitador.knee.value = 6;
+  limitador.ratio.value = 12;
+  limitador.attack.value = 0.003;
+  limitador.release.value = 0.25;
+
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 1024;
+  const destino = ctx.createMediaStreamDestination();
+
+  ctx.createMediaStreamSource(pista).connect(gain);
+  gain.connect(limitador);
+  limitador.connect(analyser);
+  limitador.connect(destino);
+  void ctx.resume();
+  return { ctx, gain, analyser, destino };
 }
 
 function mensajeErrorMedia(err: unknown): string {
@@ -86,6 +121,7 @@ export function Teleprompter() {
   const [espejo, setEspejo] = useState(false);
   const [cuentaRegresiva, setCuentaRegresiva] = useState(true);
   const [procesarAudio, setProcesarAudio] = useState(false);
+  const [ganancia, setGanancia] = useState(3);
 
   const [camaras, setCamaras] = useState<Dispositivo[]>([]);
   const [microfonos, setMicrofonos] = useState<Dispositivo[]>([]);
@@ -110,6 +146,8 @@ export function Teleprompter() {
   const medidorRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const cadenaRef = useRef<CadenaAudio | null>(null);
+  const gananciaRef = useRef(ganancia);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const posRef = useRef(0);
@@ -120,6 +158,12 @@ export function Teleprompter() {
     velocidadRef.current = velocidad;
   }, [velocidad]);
 
+  // Ganancia en vivo: actualiza la cadena activa (medidor o grabación).
+  useEffect(() => {
+    gananciaRef.current = ganancia;
+    if (cadenaRef.current) cadenaRef.current.gain.gain.value = ganancia;
+  }, [ganancia]);
+
   // Persistencia: solo guion, tamaño y velocidad.
   useEffect(() => {
     try {
@@ -129,11 +173,16 @@ export function Teleprompter() {
           guion?: string;
           tamano?: number;
           velocidad?: number;
+          ganancia?: number;
         };
         // eslint-disable-next-line react-hooks/set-state-in-effect
         if (typeof d.guion === "string") setGuion(d.guion);
         if (typeof d.tamano === "number") setTamano(d.tamano);
         if (typeof d.velocidad === "number") setVelocidad(d.velocidad);
+        if (typeof d.ganancia === "number")
+          setGanancia(
+            Math.min(GANANCIA_MAX, Math.max(GANANCIA_MIN, d.ganancia))
+          );
       }
     } catch {
       // localStorage no disponible o JSON inválido: se ignora.
@@ -146,16 +195,23 @@ export function Teleprompter() {
     try {
       localStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify({ guion, tamano, velocidad })
+        JSON.stringify({ guion, tamano, velocidad, ganancia })
       );
     } catch {
       // Sin persistencia: no es crítico.
     }
-  }, [guion, tamano, velocidad]);
+  }, [guion, tamano, velocidad, ganancia]);
 
+  // Libera todo: tracks de cámara/micrófono y el AudioContext.
   const detenerStream = useCallback(() => {
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
+    const cadena = cadenaRef.current;
+    cadenaRef.current = null;
+    if (cadena) {
+      cadena.destino.stream.getTracks().forEach((t) => t.stop());
+      void cadena.ctx.close();
+    }
   }, []);
 
   const enumerar = useCallback(async () => {
@@ -202,15 +258,16 @@ export function Teleprompter() {
   }
 
   // Medidor de nivel del micrófono en la fase Preparar. Solo arranca si ya
-  // hay permiso (hay micrófonos listados); usa las mismas restricciones que
-  // la grabación para que el nivel refleje lo que se va a grabar.
+  // hay permiso (hay micrófonos listados); usa las mismas restricciones y la
+  // misma cadena de ganancia/limitador que la grabación, así que el nivel
+  // que se ve es el que se graba.
   const hayMicrofonos = microfonos.length > 0;
   useEffect(() => {
     if (fase !== "preparar" || !hayMicrofonos) return;
     if (!navigator.mediaDevices?.getUserMedia) return;
     let cancelado = false;
     let stream: MediaStream | null = null;
-    let ctx: AudioContext | null = null;
+    let cadena: CadenaAudio | null = null;
     let raf = 0;
 
     (async () => {
@@ -222,10 +279,9 @@ export function Teleprompter() {
           stream.getTracks().forEach((t) => t.stop());
           return;
         }
-        ctx = new AudioContext();
-        const analyser = ctx.createAnalyser();
-        analyser.fftSize = 1024;
-        ctx.createMediaStreamSource(stream).connect(analyser);
+        cadena = crearCadenaAudio(stream, gananciaRef.current);
+        cadenaRef.current = cadena;
+        const analyser = cadena.analyser;
         const datos = new Uint8Array(analyser.fftSize);
         const medir = () => {
           analyser.getByteTimeDomainData(datos);
@@ -255,7 +311,10 @@ export function Teleprompter() {
       cancelado = true;
       cancelAnimationFrame(raf);
       stream?.getTracks().forEach((t) => t.stop());
-      void ctx?.close();
+      if (cadena) {
+        if (cadenaRef.current === cadena) cadenaRef.current = null;
+        void cadena.ctx.close();
+      }
     };
   }, [fase, hayMicrofonos, microfonoId, procesarAudio]);
 
@@ -285,6 +344,10 @@ export function Teleprompter() {
           return;
         }
         streamRef.current = stream;
+        cadenaRef.current = crearCadenaAudio(
+          new MediaStream(stream.getAudioTracks()),
+          gananciaRef.current
+        );
         if (videoRef.current) videoRef.current.srcObject = stream;
         setListo(true);
       } catch (err) {
@@ -335,11 +398,17 @@ export function Teleprompter() {
 
   const empezarGrabacion = useCallback(() => {
     const stream = streamRef.current;
-    if (!stream) return;
+    const cadena = cadenaRef.current;
+    if (!stream || !cadena) return;
+    // Video original + audio ya amplificado y limitado.
+    const streamGrabacion = new MediaStream([
+      ...stream.getVideoTracks(),
+      ...cadena.destino.stream.getAudioTracks(),
+    ]);
     const mimeType = elegirMimeType();
     let recorder: MediaRecorder;
     try {
-      recorder = new MediaRecorder(stream, {
+      recorder = new MediaRecorder(streamGrabacion, {
         ...(mimeType ? { mimeType } : {}),
         audioBitsPerSecond: 192000,
         videoBitsPerSecond: 8000000,
@@ -453,9 +522,9 @@ export function Teleprompter() {
         rec.onstop = null;
         rec.stop();
       }
-      streamRef.current?.getTracks().forEach((t) => t.stop());
+      detenerStream();
     };
-  }, []);
+  }, [detenerStream]);
 
   // Atajos: espacio = pausar scroll, flechas = velocidad.
   useEffect(() => {
@@ -533,6 +602,18 @@ export function Teleprompter() {
               max={VELOCIDAD_MAX}
               value={velocidad}
               onChange={(e) => setVelocidad(Number(e.target.value))}
+              className="accent-[#54A6D8]"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm text-gray-600">
+            Volumen del micrófono: {ganancia}x
+            <input
+              type="range"
+              min={GANANCIA_MIN}
+              max={GANANCIA_MAX}
+              step={0.5}
+              value={ganancia}
+              onChange={(e) => setGanancia(Number(e.target.value))}
               className="accent-[#54A6D8]"
             />
           </label>
