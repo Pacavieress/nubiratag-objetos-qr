@@ -11,6 +11,7 @@ import {
   Plus,
   RotateCcw,
   Square,
+  Trash2,
   Type,
   X,
 } from "lucide-react";
@@ -105,6 +106,7 @@ export function Teleprompter() {
   const [intento, setIntento] = useState(0);
 
   const cargadoRef = useRef(false);
+  const guionRef = useRef<HTMLTextAreaElement>(null);
   const medidorRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -428,6 +430,13 @@ export function Teleprompter() {
     setIntento((n) => n + 1);
   }
 
+  // El guion se persiste en un efecto sobre [guion], así que vaciarlo acá
+  // también lo deja vacío en localStorage.
+  function borrarGuion() {
+    setGuion("");
+    guionRef.current?.focus();
+  }
+
   function iniciar() {
     posRef.current = 0;
     setSegundos(0);
@@ -477,14 +486,26 @@ export function Teleprompter() {
     return (
       <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
         <section className="rounded-2xl border border-gray-100 bg-white p-5 sm:p-6">
-          <label
-            htmlFor="guion"
-            className="text-sm font-medium text-gray-600"
-          >
-            Guion
-          </label>
+          <div className="flex items-center justify-between">
+            <label
+              htmlFor="guion"
+              className="text-sm font-medium text-gray-600"
+            >
+              Guion
+            </label>
+            <button
+              type="button"
+              onClick={borrarGuion}
+              disabled={!guion}
+              className="flex items-center gap-1 text-xs text-gray-500 transition hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-gray-500"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Borrar todo
+            </button>
+          </div>
           <textarea
             id="guion"
+            ref={guionRef}
             value={guion}
             onChange={(e) => setGuion(e.target.value)}
             placeholder="Pega o escribe aquí el guion…"
