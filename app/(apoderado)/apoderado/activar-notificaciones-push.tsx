@@ -153,22 +153,40 @@ export function ActivarNotificacionesPush({
           applicationServerKey: urlBase64ToUint8Array(vapidPublicKey!),
         });
 
+        // Optimista: el aviso se oculta apenas el navegador confirma la
+        // suscripción, sin esperar a que el servidor la guarde. pendiente
+        // (y el botón "Activando...") solo cubre este tramo — de acá para
+        // abajo ya no se espera nada, corre en segundo plano.
+        setEstado("activo");
+
         const { endpoint, keys } = subscription.toJSON() as {
           endpoint: string;
           keys: { p256dh: string; auth: string };
         };
 
-        await guardarSuscripcion({
+        guardarSuscripcion({
           endpoint,
           claveP256dh: keys.p256dh,
           claveAuth: keys.auth,
           userAgent: navigator.userAgent,
+        }).catch(async (error) => {
+          // El navegador ya quedó suscripto pero el servidor no lo guardó:
+          // revertir la suscripción real, no solo el estado visual, para
+          // no dejar un push "activo" que en realidad nunca va a llegar.
+          setEstado("inactivo");
+          console.error(
+            "No se pudo guardar la suscripción, se revirtió:",
+            error
+          );
+          try {
+            await subscription.unsubscribe();
+          } catch (unsubError) {
+            console.error(
+              "Además falló unsubscribe() al revertir:",
+              unsubError
+            );
+          }
         });
-
-        // Activar con éxito: el aviso desaparece y no vuelve a mostrarse
-        // (estado ya no es "inactivo"/"ios-no-instalado", así que
-        // mostrarBanner pasa a false solo).
-        setEstado("activo");
       } catch (error) {
         console.error("No se pudo activar las notificaciones:", error);
       }
@@ -181,12 +199,33 @@ export function ActivarNotificacionesPush({
         const registration = await navigator.serviceWorker.ready;
         const subscription = await registration.pushManager.getSubscription();
 
-        if (subscription) {
-          await eliminarSuscripcion(subscription.endpoint);
-          await subscription.unsubscribe();
+        if (!subscription) {
+          setEstado("inactivo");
+          return;
         }
 
+        // Optimista: el link desaparece ya, sin esperar al servidor.
         setEstado("inactivo");
+
+        eliminarSuscripcion(subscription.endpoint)
+          .then(() => {
+            // Recién acá, no antes: si eliminarSuscripcion falla, el
+            // catch de abajo revierte sin haber tocado la suscripción
+            // real del navegador.
+            subscription.unsubscribe().catch((error) => {
+              console.error(
+                "No se pudo desuscribir del push en el navegador:",
+                error
+              );
+            });
+          })
+          .catch((error) => {
+            setEstado("activo");
+            console.error(
+              "No se pudo desactivar las notificaciones, se revirtió:",
+              error
+            );
+          });
       } catch (error) {
         console.error("No se pudo desactivar las notificaciones:", error);
       }
@@ -262,7 +301,7 @@ export function ActivarNotificacionesPush({
                 disabled={pendiente}
                 className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 transition hover:border-[#54A6D8] hover:text-[#54A6D8] disabled:opacity-50"
               >
-                {pendiente ? "..." : "Activar"}
+                {pendiente ? "Activando..." : "Activar"}
               </button>
             )}
             <button
