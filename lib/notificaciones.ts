@@ -56,6 +56,13 @@ type HallazgoParaRetiro = {
   ubicacion: { nombre: string; latitud: number | null; longitud: number | null };
 };
 
+// Mismo criterio que ya usan los header.tsx de los 3 paneles: primer
+// token del nombre, sin capitalizar de más (Usuario.nombre/
+// Estudiante.nombre ya vienen bien escritos).
+export function primerNombre(nombre: string): string {
+  return nombre.trim().split(/\s+/)[0];
+}
+
 // Compartido por notificarRetiro (acá abajo) y notificarHallazgo
 // (q/[token]/actions.ts) — apunta a /apoderado/hallazgos/[id], la página
 // de detalle que ya valida que el hallazgo sea de un estudiante del
@@ -67,11 +74,12 @@ type HallazgoParaRetiro = {
 export async function notificarPush(
   hallazgoId: number,
   usuarioId: number,
-  titulo: string
+  titulo: string,
+  cuerpo: string
 ): Promise<void> {
   const url = `/apoderado/hallazgos/${hallazgoId}`;
 
-  const datos = { titulo, cuerpo: "Toca para ver los detalles.", url };
+  const datos = { titulo, cuerpo, url };
 
   await registrarYEnviarNotificacion({
     hallazgoId,
@@ -116,6 +124,7 @@ export async function notificarRetiro(
   await notificarPush(
     hallazgoId,
     hallazgo.qrCodigo.estudiante.apoderado.id,
-    `Retiraron un objeto de ${hallazgo.qrCodigo.estudiante.nombre}`
+    primerNombre(hallazgo.qrCodigo.estudiante.nombre),
+    "Retiraron un objeto. Toca para ver los detalles."
   );
 }
