@@ -142,8 +142,16 @@ export function ActivarNotificacionesPush({
     });
   }
 
-  if (estado === "cargando" || estado === "no-soportado") {
+  if (estado === "cargando") {
     return null;
+  }
+
+  if (estado === "no-soportado") {
+    return (
+      <p className="text-sm text-gray-400">
+        Notificaciones no disponibles en este dispositivo.
+      </p>
+    );
   }
 
   if (estado === "ios-no-instalado") {
