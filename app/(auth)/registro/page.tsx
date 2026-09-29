@@ -133,18 +133,6 @@ export default function RegistroPage() {
       {/* Formulario: ancho completo en mobile, mitad derecha en desktop */}
       <div className="flex h-full w-full flex-col overflow-y-auto overscroll-contain bg-white/95 lg:w-1/2 lg:bg-white">
         <div className="mx-auto flex w-full max-w-[320px] flex-1 flex-col justify-center px-6 py-12">
-          {/* Tagline: solo mobile, arriba del logo */}
-          <div className="mb-4 text-center lg:hidden">
-            <p className="text-xs font-medium leading-snug text-gray-600">
-              Cada mochila, cada estuche, cada chaqueta, siempre de vuelta a
-              casa.
-            </p>
-            <p className="mt-1 text-xs text-gray-400">
-              NubiraTag conecta los objetos de tus hijos con su dueño en el
-              colegio.
-            </p>
-          </div>
-
           <div className="mb-6 text-center">
             <span className="text-4xl font-semibold">
               <span className="text-[#2c7bc0]">Nubira</span>
