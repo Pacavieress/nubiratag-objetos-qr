@@ -324,7 +324,6 @@ function plantillaRetiro(opts: {
                   desde <strong>${escapeHtml(opts.ubicacion)}</strong>, ${escapeHtml(opts.colegio)},
                   el ${fechaTexto}.
                 </p>
-                ${botonMapa(opts.latitud, opts.longitud)}
               </td>
             </tr>
           </table>

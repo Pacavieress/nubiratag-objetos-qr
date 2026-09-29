@@ -206,7 +206,6 @@ export async function registrarHallazgo(
   await notificarPush(
     hallazgo.id,
     qr.estudiante.apoderado.id,
-    qr.estudianteId,
     `Encontraron un objeto de ${qr.estudiante.nombre}`
   );
 

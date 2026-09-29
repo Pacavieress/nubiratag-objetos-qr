@@ -47,7 +47,6 @@ export async function registrarYEnviarNotificacion(opts: {
 type HallazgoParaRetiro = {
   qrCodigo: {
     etiqueta: string | null;
-    estudianteId: number;
     colegio: { nombre: string };
     estudiante: {
       nombre: string;
@@ -58,20 +57,19 @@ type HallazgoParaRetiro = {
 };
 
 // Compartido por notificarRetiro (acá abajo) y notificarHallazgo
-// (q/[token]/actions.ts) — misma página de destino en los dos casos: el
-// apoderado ve el hallazgo en el historial de /apoderado/estudiantes/[id],
-// no hay una URL "por hallazgo" separada. canal "web" es el mismo enum
-// CanalNotificacion que ya existía sin uso; registrarYEnviarNotificacion
-// ya contiene su propio try/catch (nunca lanza), y enviarPush tampoco
-// lanza (ver lib/push.ts) — doble seguro de que un fallo acá nunca se
-// propaga hacia quien llama.
+// (q/[token]/actions.ts) — apunta a /apoderado/hallazgos/[id], la página
+// de detalle que ya valida que el hallazgo sea de un estudiante del
+// apoderado en sesión. canal "web" es el mismo enum CanalNotificacion
+// que ya existía sin uso; registrarYEnviarNotificacion ya contiene su
+// propio try/catch (nunca lanza), y enviarPush tampoco lanza (ver
+// lib/push.ts) — doble seguro de que un fallo acá nunca se propaga hacia
+// quien llama.
 export async function notificarPush(
   hallazgoId: number,
   usuarioId: number,
-  estudianteId: number,
   titulo: string
 ): Promise<void> {
-  const url = `/apoderado/estudiantes/${estudianteId}`;
+  const url = `/apoderado/hallazgos/${hallazgoId}`;
 
   const datos = { titulo, cuerpo: "Toca para ver los detalles.", url };
 
@@ -118,7 +116,6 @@ export async function notificarRetiro(
   await notificarPush(
     hallazgoId,
     hallazgo.qrCodigo.estudiante.apoderado.id,
-    hallazgo.qrCodigo.estudianteId,
     `Retiraron un objeto de ${hallazgo.qrCodigo.estudiante.nombre}`
   );
 }
