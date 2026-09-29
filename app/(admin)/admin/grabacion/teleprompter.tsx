@@ -34,6 +34,22 @@ function elegirMimeType(): string {
   return candidatos.find((t) => MediaRecorder.isTypeSupported(t)) ?? "";
 }
 
+// Sin procesamiento del navegador por defecto: el AGC/supresión de ruido
+// de Chrome suele comprimir y "bombear" la voz en grabaciones.
+function restriccionesAudio(
+  microfonoId: string,
+  procesar: boolean
+): MediaTrackConstraints {
+  return {
+    deviceId: microfonoId ? { exact: microfonoId } : undefined,
+    echoCancellation: procesar,
+    noiseSuppression: procesar,
+    autoGainControl: procesar,
+    channelCount: 1,
+    sampleRate: 48000,
+  };
+}
+
 function mensajeErrorMedia(err: unknown): string {
   const name = err instanceof DOMException ? err.name : "";
   switch (name) {
@@ -68,6 +84,7 @@ export function Teleprompter() {
   const [velocidad, setVelocidad] = useState(60);
   const [espejo, setEspejo] = useState(false);
   const [cuentaRegresiva, setCuentaRegresiva] = useState(true);
+  const [procesarAudio, setProcesarAudio] = useState(false);
 
   const [camaras, setCamaras] = useState<Dispositivo[]>([]);
   const [microfonos, setMicrofonos] = useState<Dispositivo[]>([]);
@@ -88,6 +105,7 @@ export function Teleprompter() {
   const [intento, setIntento] = useState(0);
 
   const cargadoRef = useRef(false);
+  const medidorRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -181,6 +199,64 @@ export function Teleprompter() {
     }
   }
 
+  // Medidor de nivel del micrófono en la fase Preparar. Solo arranca si ya
+  // hay permiso (hay micrófonos listados); usa las mismas restricciones que
+  // la grabación para que el nivel refleje lo que se va a grabar.
+  const hayMicrofonos = microfonos.length > 0;
+  useEffect(() => {
+    if (fase !== "preparar" || !hayMicrofonos) return;
+    if (!navigator.mediaDevices?.getUserMedia) return;
+    let cancelado = false;
+    let stream: MediaStream | null = null;
+    let ctx: AudioContext | null = null;
+    let raf = 0;
+
+    (async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: restriccionesAudio(microfonoId, procesarAudio),
+        });
+        if (cancelado) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        ctx = new AudioContext();
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 1024;
+        ctx.createMediaStreamSource(stream).connect(analyser);
+        const datos = new Uint8Array(analyser.fftSize);
+        const medir = () => {
+          analyser.getByteTimeDomainData(datos);
+          let suma = 0;
+          for (const v of datos) {
+            const x = (v - 128) / 128;
+            suma += x * x;
+          }
+          const rms = Math.sqrt(suma / datos.length);
+          // Escala en dBFS: -60 dB → 0%, 0 dB → 100%.
+          const db = 20 * Math.log10(Math.max(rms, 1e-6));
+          const pct = Math.min(100, Math.max(0, ((db + 60) / 60) * 100));
+          if (medidorRef.current) {
+            medidorRef.current.style.width = `${pct}%`;
+            medidorRef.current.style.backgroundColor =
+              pct > 90 ? "#dc2626" : pct > 30 ? "#54A6D8" : "#9ca3af";
+          }
+          raf = requestAnimationFrame(medir);
+        };
+        medir();
+      } catch (err) {
+        if (!cancelado) setErrorPrep(mensajeErrorMedia(err));
+      }
+    })();
+
+    return () => {
+      cancelado = true;
+      cancelAnimationFrame(raf);
+      stream?.getTracks().forEach((t) => t.stop());
+      void ctx?.close();
+    };
+  }, [fase, hayMicrofonos, microfonoId, procesarAudio]);
+
   // Adquiere el stream al entrar a la fase de grabación (o al reintentar).
   useEffect(() => {
     if (fase !== "grabar") return;
@@ -200,7 +276,7 @@ export function Teleprompter() {
             width: { ideal: 1920 },
             height: { ideal: 1080 },
           },
-          audio: microfonoId ? { deviceId: { exact: microfonoId } } : true,
+          audio: restriccionesAudio(microfonoId, procesarAudio),
         });
         if (cancelado) {
           stream.getTracks().forEach((t) => t.stop());
@@ -261,7 +337,11 @@ export function Teleprompter() {
     const mimeType = elegirMimeType();
     let recorder: MediaRecorder;
     try {
-      recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      recorder = new MediaRecorder(stream, {
+        ...(mimeType ? { mimeType } : {}),
+        audioBitsPerSecond: 192000,
+        videoBitsPerSecond: 8000000,
+      });
     } catch {
       setErrorGrabar("Este navegador no puede grabar video.");
       return;
@@ -453,6 +533,19 @@ export function Teleprompter() {
             />
             Cuenta regresiva de 3 s
           </label>
+          <label className="flex items-center gap-2 text-sm text-gray-700">
+            <input
+              type="checkbox"
+              checked={procesarAudio}
+              onChange={(e) => setProcesarAudio(e.target.checked)}
+              className="h-4 w-4 accent-[#54A6D8]"
+            />
+            Procesar audio del navegador
+          </label>
+          <p className="-mt-3 text-xs text-gray-500">
+            Cancelación de eco, supresión de ruido y control automático de
+            ganancia. Apagado suena más natural.
+          </p>
 
           <div className="flex flex-col gap-3 border-t border-gray-100 pt-4">
             {camaras.length === 0 && microfonos.length === 0 ? (
@@ -495,6 +588,21 @@ export function Teleprompter() {
                   </select>
                 </label>
               </>
+            )}
+            {hayMicrofonos && (
+              <div className="flex flex-col gap-1">
+                <span className="text-sm text-gray-600">Nivel del micrófono</span>
+                <div className="h-3 overflow-hidden rounded-full bg-gray-100">
+                  <div
+                    ref={medidorRef}
+                    className="h-full w-0 rounded-full bg-gray-400"
+                  />
+                </div>
+                <span className="text-xs text-gray-500">
+                  Habla normal: la barra debería quedar a mitad o más, sin
+                  llegar al rojo.
+                </span>
+              </div>
             )}
             {errorPrep && (
               <p role="alert" className="text-sm text-red-600">
