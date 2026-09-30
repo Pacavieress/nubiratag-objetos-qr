@@ -31,6 +31,10 @@ const LIMITE_DURACION_S = 18;
 // Umbral de "ya hay voz" para medir el tiempo muerto inicial (dBFS, después
 // de ganancia y limitador).
 const UMBRAL_VOZ_DB = -40;
+// Corte automático al terminar el guion: silencio continuo necesario y tope
+// de espera, ambos contados desde que el scroll llega al final.
+const SILENCIO_CORTE_MS = 600;
+const TOPE_CORTE_MS = 4000;
 const TIMEOUT_PERMISO_MS = 10000;
 const MENSAJE_TIMEOUT_PERMISO =
   "El navegador no respondió a la solicitud. Revisa el permiso del sitio en la configuración del navegador o ábrelo en Chrome o Safari.";
@@ -40,21 +44,18 @@ type Fase = "preparar" | "grabar";
 type Modo = "completa" | "gancho";
 type Archivo = { url: string; ext: string };
 type Grabador = { recorder: MediaRecorder; fin: Promise<Archivo> };
-type Clip = { bloque: number; etiqueta: string; fin: Promise<Archivo> };
-type ClipListo = { bloque: number; etiqueta: string } & Archivo;
 type Toma = Archivo & {
   id: number;
   modo: Modo;
   segundos: number;
   muertoMs: number | null;
-  clips: ClipListo[];
+  muertoFinalMs: number | null;
 };
 type Sesion = {
   principal: Grabador;
-  clipActual: Grabador | null;
-  clips: Clip[];
   inicio: number;
   muertoMs: number | null;
+  ultimaVoz: number | null; // performance.now() de la última voz detectada
   modo: Modo;
 };
 
@@ -277,6 +278,9 @@ export function Teleprompter() {
   const [espejo, setEspejo] = useState(false);
   const [cuentaSeg, setCuentaSeg] = useState<number>(1);
   const [guias, setGuias] = useState(true);
+  const [cortarAlFinal, setCortarAlFinal] = useState(true);
+  // Momento (performance.now) en que el scroll llegó al final; null = sin vigilar.
+  const [finScroll, setFinScroll] = useState<number | null>(null);
   const [preset, setPreset] = useState<PresetId>("normal");
   const [procesarAudio, setProcesarAudio] = useState(false);
   const [ganancia, setGanancia] = useState(3);
@@ -331,7 +335,6 @@ export function Teleprompter() {
     () => (modo === "gancho" ? bloques.slice(0, 1) : bloques),
     [bloques, modo]
   );
-  const bloquesGrabRef = useRef(bloquesGrab);
   const palabrasPorSeg = PRESETS[preset].palabrasPorSeg;
   const duraciones = bloques.map((b) => contarPalabras(b) / palabrasPorSeg);
   const duracionTotal = duraciones.reduce((a, b) => a + b, 0);
@@ -339,10 +342,6 @@ export function Teleprompter() {
   useEffect(() => {
     velocidadRef.current = velocidad;
   }, [velocidad]);
-
-  useEffect(() => {
-    bloquesGrabRef.current = bloquesGrab;
-  }, [bloquesGrab]);
 
   // La fase "grabar" ocupa todo el panel: oculta Sidebar, Header y BottomNav.
   const { setActivo: setInmersivo } = useInmersivo();
@@ -373,6 +372,7 @@ export function Teleprompter() {
           ganancia?: number;
           cuentaSeg?: number;
           guias?: boolean;
+          cortarAlFinal?: boolean;
           preset?: string;
         };
         // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -385,6 +385,8 @@ export function Teleprompter() {
         )
           setCuentaSeg(d.cuentaSeg);
         if (typeof d.guias === "boolean") setGuias(d.guias);
+        if (typeof d.cortarAlFinal === "boolean")
+          setCortarAlFinal(d.cortarAlFinal);
         if (d.preset && d.preset in PRESETS) setPreset(d.preset as PresetId);
         if (typeof d.ganancia === "number")
           setGanancia(
@@ -409,13 +411,23 @@ export function Teleprompter() {
           ganancia,
           cuentaSeg,
           guias,
+          cortarAlFinal,
           preset,
         })
       );
     } catch {
       // Sin persistencia: no es crítico.
     }
-  }, [guion, tamano, velocidad, ganancia, cuentaSeg, guias, preset]);
+  }, [
+    guion,
+    tamano,
+    velocidad,
+    ganancia,
+    cuentaSeg,
+    guias,
+    cortarAlFinal,
+    preset,
+  ]);
 
   // Libera todo: tracks de cámara/micrófono y el AudioContext.
   const detenerStream = useCallback(() => {
@@ -617,29 +629,6 @@ export function Teleprompter() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fase, intento, detenerStream]);
 
-  // Cada bloque se graba además como clip propio: al cambiar el bloque
-  // activo se cierra el clip anterior y se abre otro sobre el mismo stream.
-  // Los cortes siguen la posición del scroll, no la voz.
-  const cambiarClip = useCallback((idx: number) => {
-    const s = sesionRef.current;
-    const total = bloquesGrabRef.current.length;
-    if (!s || s.modo !== "completa" || total < 2) return;
-    const paraGrabar = streamParaGrabar(streamRef.current, cadenaRef.current);
-    if (!paraGrabar) return;
-    try {
-      const nuevo = crearGrabador(paraGrabar, elegirMimeType());
-      if (s.clipActual) detenerRecorder(s.clipActual.recorder);
-      s.clipActual = nuevo;
-      s.clips.push({
-        bloque: idx,
-        etiqueta: etiquetaBloque(idx, total),
-        fin: nuevo.fin,
-      });
-    } catch {
-      // Sin clip para este bloque; la toma completa sigue grabándose.
-    }
-  }, []);
-
   // Bloque bajo la línea de lectura (mitad de la ventana del guion).
   const calcularActivo = useCallback(() => {
     const el = scrollRef.current;
@@ -652,9 +641,8 @@ export function Teleprompter() {
     if (activo !== activoRef.current) {
       activoRef.current = activo;
       setBloqueActivo(activo);
-      cambiarClip(activo);
     }
-  }, [cambiarClip]);
+  }, []);
 
   // Scroll automático del guion.
   useEffect(() => {
@@ -670,6 +658,7 @@ export function Teleprompter() {
           posRef.current = max;
           el.scrollTop = max;
           calcularActivo();
+          setFinScroll(performance.now());
           setScrolling(false);
           return;
         }
@@ -683,8 +672,10 @@ export function Teleprompter() {
     return () => cancelAnimationFrame(raf);
   }, [scrolling, fase, calcularActivo]);
 
-  // Cronómetro + tiempo muerto inicial: ms desde que arranca el recorder
-  // hasta que el nivel del micrófono supera el umbral de voz por 1ª vez.
+  // Cronómetro + seguimiento de voz. Tiempo muerto inicial: ms desde que
+  // arranca el recorder hasta que el nivel supera el umbral de voz por 1ª
+  // vez. También se anota la última voz, que usan el corte automático y el
+  // tiempo muerto final.
   useEffect(() => {
     if (!grabando) return;
     const id = setInterval(() => setSegundos((s) => s + 1), 1000);
@@ -692,9 +683,12 @@ export function Teleprompter() {
     const datos = analyser ? new Uint8Array(analyser.fftSize) : null;
     const medidor = setInterval(() => {
       const s = sesionRef.current;
-      if (!s || s.muertoMs !== null || !analyser || !datos) return;
-      if (nivelDb(analyser, datos) > UMBRAL_VOZ_DB)
-        s.muertoMs = Math.round(performance.now() - s.inicio);
+      if (!s || !analyser || !datos) return;
+      if (nivelDb(analyser, datos) > UMBRAL_VOZ_DB) {
+        const ahora = performance.now();
+        s.ultimaVoz = ahora;
+        if (s.muertoMs === null) s.muertoMs = Math.round(ahora - s.inicio);
+      }
     }, 20);
     return () => {
       clearInterval(id);
@@ -716,32 +710,33 @@ export function Teleprompter() {
     }
     sesionRef.current = {
       principal,
-      clipActual: null,
-      clips: [],
       inicio: performance.now(),
       muertoMs: null,
+      ultimaVoz: null,
       modo,
     };
-    cambiarClip(activoRef.current);
     setSegundos(0);
+    setFinScroll(null);
     setGrabando(true);
     setScrolling(true);
-  }, [modo, cambiarClip]);
+  }, [modo]);
 
-  // Cierra los recorders y arma la toma cuando los blobs están listos.
-  function terminarGrabacion() {
+  // Cierra el recorder y arma la toma cuando el blob está listo. Sirve para
+  // el corte manual y para el automático; el tiempo muerto final es el que
+  // hay entre la última voz y este momento.
+  const terminarGrabacion = useCallback(() => {
     const s = sesionRef.current;
     if (!s) return;
     sesionRef.current = null;
     setGrabando(false);
     setScrolling(false);
+    setFinScroll(null);
     detenerRecorder(s.principal.recorder);
-    if (s.clipActual) detenerRecorder(s.clipActual.recorder);
-    const duracion = Math.round((performance.now() - s.inicio) / 1000);
-    void Promise.all([
-      s.principal.fin,
-      Promise.all(s.clips.map((c) => c.fin)),
-    ]).then(([archivo, archivosClips]) => {
+    const ahora = performance.now();
+    const duracion = Math.round((ahora - s.inicio) / 1000);
+    const muertoFinalMs =
+      s.ultimaVoz !== null ? Math.round(ahora - s.ultimaVoz) : null;
+    void s.principal.fin.then((archivo) => {
       const id = siguienteTomaRef.current++;
       const toma: Toma = {
         ...archivo,
@@ -749,18 +744,42 @@ export function Teleprompter() {
         modo: s.modo,
         segundos: duracion,
         muertoMs: s.muertoMs,
-        clips: archivosClips.map((a, i) => ({
-          bloque: s.clips[i].bloque,
-          etiqueta: s.clips[i].etiqueta,
-          ...a,
-        })),
+        muertoFinalMs,
       };
       setTomas((prev) => [...prev, toma]);
       setTomaId(id);
       setEnResultado(true);
       detenerStream();
     });
-  }
+  }, [detenerStream]);
+
+  // Corte al terminar el guion: con el scroll en el final se vigila la voz
+  // (la última voz la anota el seguimiento de arriba) y se corta tras
+  // SILENCIO_CORTE_MS de silencio continuo, o a los TOPE_CORTE_MS del final.
+  // Pausar o reanudar pone finScroll en null y reinicia la vigilancia.
+  useEffect(() => {
+    if (!grabando || !cortarAlFinal || finScroll === null) return;
+    const id = setInterval(() => {
+      const s = sesionRef.current;
+      if (!s) return;
+      const ahora = performance.now();
+      // Solo cuenta el silencio observado ya vigilando.
+      const desde = Math.max(finScroll, s.ultimaVoz ?? 0);
+      if (
+        ahora - desde >= SILENCIO_CORTE_MS ||
+        ahora - finScroll >= TOPE_CORTE_MS
+      )
+        terminarGrabacion();
+    }, 50);
+    return () => clearInterval(id);
+  }, [grabando, cortarAlFinal, finScroll, terminarGrabacion]);
+
+  // Pausar/reanudar a mano cancela la vigilancia; si el scroll vuelve a
+  // llegar al final, se arma de nuevo desde cero.
+  const alternarScroll = useCallback(() => {
+    setFinScroll(null);
+    setScrolling((s) => !s);
+  }, []);
 
   function alternarGrabacion() {
     if (grabando) {
@@ -795,6 +814,7 @@ export function Teleprompter() {
     posRef.current = 0;
     activoRef.current = 0;
     setBloqueActivo(0);
+    setFinScroll(null);
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
   }
 
@@ -803,15 +823,12 @@ export function Teleprompter() {
     const s = sesionRef.current;
     sesionRef.current = null;
     if (!s) return;
-    const fins = [s.principal.fin, ...s.clips.map((c) => c.fin)];
     detenerRecorder(s.principal.recorder);
-    if (s.clipActual) detenerRecorder(s.clipActual.recorder);
-    fins.forEach((f) => void f.then((a) => URL.revokeObjectURL(a.url)));
+    void s.principal.fin.then((a) => URL.revokeObjectURL(a.url));
   }, []);
 
   function liberarToma(t: Toma) {
     URL.revokeObjectURL(t.url);
-    t.clips.forEach((c) => URL.revokeObjectURL(c.url));
   }
 
   function limpiarEstadoGrabacion() {
@@ -901,10 +918,7 @@ export function Teleprompter() {
     return () => {
       if (conteoTimerRef.current) clearInterval(conteoTimerRef.current);
       descartarSesion();
-      tomasRef.current.forEach((t) => {
-        URL.revokeObjectURL(t.url);
-        t.clips.forEach((c) => URL.revokeObjectURL(c.url));
-      });
+      tomasRef.current.forEach((t) => URL.revokeObjectURL(t.url));
       detenerStream();
     };
   }, [detenerStream, descartarSesion]);
@@ -916,7 +930,7 @@ export function Teleprompter() {
       if (e.key === " ") {
         e.preventDefault();
         (document.activeElement as HTMLElement | null)?.blur();
-        setScrolling((s) => !s);
+        alternarScroll();
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
         setVelocidad((v) => Math.min(VELOCIDAD_MAX, v + 10));
@@ -927,7 +941,7 @@ export function Teleprompter() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [fase, enResultado]);
+  }, [fase, enResultado, alternarScroll]);
 
   const avisoErrorPrep = (
     <>
@@ -1147,7 +1161,16 @@ export function Teleprompter() {
               onChange={(e) => setGuias(e.target.checked)}
               className="h-4 w-4 accent-[#54A6D8]"
             />
-            Guías en pantalla (zona segura y encuadre)
+            Guías en pantalla (encuadre)
+          </label>
+          <label className="flex items-center gap-2 text-sm text-gray-700">
+            <input
+              type="checkbox"
+              checked={cortarAlFinal}
+              onChange={(e) => setCortarAlFinal(e.target.checked)}
+              className="h-4 w-4 accent-[#54A6D8]"
+            />
+            Cortar al terminar el guion
           </label>
           <label className="flex items-center gap-2 text-sm text-gray-700">
             <input
@@ -1292,6 +1315,12 @@ export function Teleprompter() {
                 ? `${tomaSel.muertoMs} ms`
                 : "sin voz detectada"}
             </strong>
+            {" · "}Tiempo muerto final:{" "}
+            <strong className="tabular-nums">
+              {tomaSel.muertoFinalMs !== null
+                ? `${tomaSel.muertoFinalMs} ms`
+                : "sin voz detectada"}
+            </strong>
           </p>
 
           <div className="flex flex-wrap justify-center gap-3">
@@ -1341,32 +1370,6 @@ export function Teleprompter() {
             <p className="text-center text-xs text-white/70">
               Máximo {MAX_TOMAS} tomas en memoria: descarta una para grabar otra.
             </p>
-          )}
-
-          {tomaSel.clips.length > 0 && (
-            <div className="flex w-full max-w-md flex-col gap-2 border-t border-white/15 pt-4">
-              <span className="text-sm text-white/80">
-                Clips por bloque (corte según el scroll del guion)
-              </span>
-              <div className="flex flex-wrap gap-2">
-                {tomaSel.clips.map((c, i) => (
-                  <a
-                    key={i}
-                    href={c.url}
-                    download={nombreArchivo(
-                      c.ext,
-                      `toma-${tomas.indexOf(tomaSel) + 1}-${i + 1}-${c.etiqueta
-                        .toLowerCase()
-                        .replace(/\s+/g, "-")}`
-                    )}
-                    className={botonCtrl}
-                  >
-                    <Download className="h-4 w-4" />
-                    {c.etiqueta}
-                  </a>
-                ))}
-              </div>
-            </div>
           )}
         </div>
       ) : (
@@ -1499,7 +1502,7 @@ export function Teleprompter() {
             </button>
             <button
               type="button"
-              onClick={() => setScrolling((s) => !s)}
+              onClick={alternarScroll}
               className={botonCtrl}
               title="Espacio"
             >
