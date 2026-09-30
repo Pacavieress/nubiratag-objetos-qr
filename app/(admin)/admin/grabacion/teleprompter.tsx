@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Camera,
   Circle,
   Download,
+  Frame,
   Minus,
   Pause,
   Play,
@@ -23,9 +24,35 @@ const VELOCIDAD_MIN = 10;
 const VELOCIDAD_MAX = 300;
 const GANANCIA_MIN = 1;
 const GANANCIA_MAX = 6;
+const ASPECTO_VERTICAL = 9 / 16;
+const MAX_TOMAS = 5;
+const LIMITE_DURACION_S = 18;
+// Umbral de "ya hay voz" para medir el tiempo muerto inicial (dBFS, después
+// de ganancia y limitador).
+const UMBRAL_VOZ_DB = -40;
 
 type Dispositivo = { id: string; label: string };
 type Fase = "preparar" | "grabar";
+type Modo = "completa" | "gancho";
+type Archivo = { url: string; ext: string };
+type Grabador = { recorder: MediaRecorder; fin: Promise<Archivo> };
+type Clip = { bloque: number; etiqueta: string; fin: Promise<Archivo> };
+type ClipListo = { bloque: number; etiqueta: string } & Archivo;
+type Toma = Archivo & {
+  id: number;
+  modo: Modo;
+  segundos: number;
+  muertoMs: number | null;
+  clips: ClipListo[];
+};
+type Sesion = {
+  principal: Grabador;
+  clipActual: Grabador | null;
+  clips: Clip[];
+  inicio: number;
+  muertoMs: number | null;
+  modo: Modo;
+};
 
 function elegirMimeType(): string {
   if (typeof MediaRecorder === "undefined") return "";
@@ -102,15 +129,110 @@ function mensajeErrorMedia(err: unknown): string {
   }
 }
 
-function nombreArchivo(ext: string): string {
+function nombreArchivo(ext: string, sufijo?: string): string {
   const d = new Date();
   const p = (n: number) => String(n).padStart(2, "0");
-  return `grabacion-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}.${ext}`;
+  return `grabacion-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${sufijo ? `-${sufijo}` : ""}.${ext}`;
+}
+
+// Video original + audio ya amplificado y limitado.
+function streamParaGrabar(
+  stream: MediaStream | null,
+  cadena: CadenaAudio | null
+): MediaStream | null {
+  if (!stream || !cadena) return null;
+  return new MediaStream([
+    ...stream.getVideoTracks(),
+    ...cadena.destino.stream.getAudioTracks(),
+  ]);
+}
+
+function detenerRecorder(recorder: MediaRecorder) {
+  if (recorder.state !== "inactive") recorder.stop();
+}
+
+// Un MediaRecorder cuyo resultado llega como promesa de blob URL.
+function crearGrabador(stream: MediaStream, mimeType: string): Grabador {
+  const recorder = new MediaRecorder(stream, {
+    ...(mimeType ? { mimeType } : {}),
+    audioBitsPerSecond: 192000,
+    videoBitsPerSecond: 8000000,
+  });
+  const trozos: Blob[] = [];
+  recorder.ondataavailable = (e) => {
+    if (e.data.size > 0) trozos.push(e.data);
+  };
+  const fin = new Promise<Archivo>((resolve) => {
+    recorder.onstop = () => {
+      const tipo = recorder.mimeType || mimeType || "video/webm";
+      resolve({
+        url: URL.createObjectURL(new Blob(trozos, { type: tipo })),
+        ext: tipo.includes("mp4") ? "mp4" : "webm",
+      });
+    };
+  });
+  recorder.start(1000);
+  return { recorder, fin };
+}
+
+// Nivel RMS en dBFS de lo que hay ahora en el analizador.
+function nivelDb(analyser: AnalyserNode, datos: Uint8Array<ArrayBuffer>) {
+  analyser.getByteTimeDomainData(datos);
+  let suma = 0;
+  for (const v of datos) {
+    const x = (v - 128) / 128;
+    suma += x * x;
+  }
+  return 20 * Math.log10(Math.max(Math.sqrt(suma / datos.length), 1e-6));
 }
 
 function formatoTiempo(seg: number): string {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${p(Math.floor(seg / 60))}:${p(seg % 60)}`;
+}
+
+// Ritmo: velocidad de scroll (px/s) y palabras/seg con que se estima la
+// duración de cada bloque.
+const PRESETS = {
+  normal: { nombre: "Normal", velocidad: 60, palabrasPorSeg: 2.5 },
+  dinamico: { nombre: "Dinámico", velocidad: 90, palabrasPorSeg: 2.8 },
+  rafaga: { nombre: "Ráfaga", velocidad: 130, palabrasPorSeg: 3.3 },
+} as const;
+type PresetId = keyof typeof PRESETS;
+
+const OPCIONES_CUENTA = [0, 1, 2, 3] as const;
+
+// Se arma con RegExp() y no como literal: lookarounds Unicode (\p{L}) que
+// el target ES2017 del tsconfig no acepta en un literal.
+const MULETILLAS = new RegExp(
+  "(?<![\\p{L}\\p{N}])(yo creo que|o sea|pero|eh+)(?![\\p{L}\\p{N}])",
+  "giu"
+);
+
+function dividirMuletillas(texto: string): { texto: string; muletilla: boolean }[] {
+  // El split con grupo de captura deja las coincidencias en índices impares.
+  return texto
+    .split(MULETILLAS)
+    .map((t, i) => ({ texto: t, muletilla: i % 2 === 1 }))
+    .filter((p) => p.texto !== "");
+}
+
+function contarPalabras(texto: string): number {
+  return texto.split(/\s+/).filter(Boolean).length;
+}
+
+// Bloques = párrafos separados por línea(s) en blanco.
+function dividirBloques(guion: string): string[] {
+  return guion
+    .split(/\n\s*\n/)
+    .map((b) => b.trim())
+    .filter(Boolean);
+}
+
+function etiquetaBloque(i: number, total: number): string {
+  if (i === 0) return "Gancho";
+  if (i === total - 1) return "Cierre";
+  return total > 3 ? `Desarrollo ${i}` : "Desarrollo";
 }
 
 export function Teleprompter() {
@@ -119,7 +241,9 @@ export function Teleprompter() {
   const [tamano, setTamano] = useState(48);
   const [velocidad, setVelocidad] = useState(60);
   const [espejo, setEspejo] = useState(false);
-  const [cuentaRegresiva, setCuentaRegresiva] = useState(true);
+  const [cuentaSeg, setCuentaSeg] = useState<number>(1);
+  const [guias, setGuias] = useState(true);
+  const [preset, setPreset] = useState<PresetId>("normal");
   const [procesarAudio, setProcesarAudio] = useState(false);
   const [ganancia, setGanancia] = useState(3);
 
@@ -135,28 +259,53 @@ export function Teleprompter() {
   const [scrolling, setScrolling] = useState(false);
   const [conteo, setConteo] = useState<number | null>(null);
   const [segundos, setSegundos] = useState(0);
-  const [resultado, setResultado] = useState<{
-    url: string;
-    ext: string;
-  } | null>(null);
   const [intento, setIntento] = useState(0);
+  const [avisoFormato, setAvisoFormato] = useState<string | null>(null);
+  const [modo, setModo] = useState<Modo>("completa");
+  const [bloqueActivo, setBloqueActivo] = useState(0);
+  const [tomas, setTomas] = useState<Toma[]>([]);
+  const [tomaId, setTomaId] = useState<number | null>(null);
+  const [enResultado, setEnResultado] = useState(false);
 
   const cargadoRef = useRef(false);
   const guionRef = useRef<HTMLTextAreaElement>(null);
+  const resaltadoRef = useRef<HTMLDivElement>(null);
+  const sesionRef = useRef<Sesion | null>(null);
+  const tomasRef = useRef<Toma[]>([]);
+  const siguienteTomaRef = useRef(1);
+  const activoRef = useRef(0);
   const medidorRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const cadenaRef = useRef<CadenaAudio | null>(null);
   const gananciaRef = useRef(ganancia);
-  const recorderRef = useRef<MediaRecorder | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const posRef = useRef(0);
   const velocidadRef = useRef(velocidad);
   const conteoTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const bloques = useMemo(() => dividirBloques(guion), [guion]);
+  // En "Regrabar gancho" solo se muestra y graba el primer bloque.
+  const bloquesGrab = useMemo(
+    () => (modo === "gancho" ? bloques.slice(0, 1) : bloques),
+    [bloques, modo]
+  );
+  const bloquesGrabRef = useRef(bloquesGrab);
+  const palabrasPorSeg = PRESETS[preset].palabrasPorSeg;
+  const duraciones = bloques.map((b) => contarPalabras(b) / palabrasPorSeg);
+  const duracionTotal = duraciones.reduce((a, b) => a + b, 0);
+
   useEffect(() => {
     velocidadRef.current = velocidad;
   }, [velocidad]);
+
+  useEffect(() => {
+    bloquesGrabRef.current = bloquesGrab;
+  }, [bloquesGrab]);
+
+  useEffect(() => {
+    tomasRef.current = tomas;
+  }, [tomas]);
 
   // Ganancia en vivo: actualiza la cadena activa (medidor o grabación).
   useEffect(() => {
@@ -174,11 +323,21 @@ export function Teleprompter() {
           tamano?: number;
           velocidad?: number;
           ganancia?: number;
+          cuentaSeg?: number;
+          guias?: boolean;
+          preset?: string;
         };
         // eslint-disable-next-line react-hooks/set-state-in-effect
         if (typeof d.guion === "string") setGuion(d.guion);
         if (typeof d.tamano === "number") setTamano(d.tamano);
         if (typeof d.velocidad === "number") setVelocidad(d.velocidad);
+        if (
+          typeof d.cuentaSeg === "number" &&
+          (OPCIONES_CUENTA as readonly number[]).includes(d.cuentaSeg)
+        )
+          setCuentaSeg(d.cuentaSeg);
+        if (typeof d.guias === "boolean") setGuias(d.guias);
+        if (d.preset && d.preset in PRESETS) setPreset(d.preset as PresetId);
         if (typeof d.ganancia === "number")
           setGanancia(
             Math.min(GANANCIA_MAX, Math.max(GANANCIA_MIN, d.ganancia))
@@ -195,12 +354,20 @@ export function Teleprompter() {
     try {
       localStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify({ guion, tamano, velocidad, ganancia })
+        JSON.stringify({
+          guion,
+          tamano,
+          velocidad,
+          ganancia,
+          cuentaSeg,
+          guias,
+          preset,
+        })
       );
     } catch {
       // Sin persistencia: no es crítico.
     }
-  }, [guion, tamano, velocidad, ganancia]);
+  }, [guion, tamano, velocidad, ganancia, cuentaSeg, guias, preset]);
 
   // Libera todo: tracks de cámara/micrófono y el AudioContext.
   const detenerStream = useCallback(() => {
@@ -332,16 +499,31 @@ export function Teleprompter() {
       }
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
+          // "ideal" y no "exact": una webcam solo horizontal rechazaría
+          // un 9:16 exacto con OverconstrainedError.
           video: {
             deviceId: camaraId ? { exact: camaraId } : undefined,
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
+            width: { ideal: 1080 },
+            height: { ideal: 1920 },
+            aspectRatio: { ideal: ASPECTO_VERTICAL },
           },
           audio: restriccionesAudio(microfonoId, procesarAudio),
         });
         if (cancelado) {
           stream.getTracks().forEach((t) => t.stop());
           return;
+        }
+        const ajustes = stream.getVideoTracks()[0]?.getSettings();
+        if (
+          ajustes?.width &&
+          ajustes.height &&
+          Math.abs(ajustes.width / ajustes.height - ASPECTO_VERTICAL) > 0.05
+        ) {
+          setAvisoFormato(
+            `Esta cámara entrega ${ajustes.width}×${ajustes.height}, no vertical. El video quedará con ese formato.`
+          );
+        } else {
+          setAvisoFormato(null);
         }
         streamRef.current = stream;
         cadenaRef.current = crearCadenaAudio(
@@ -364,6 +546,45 @@ export function Teleprompter() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fase, intento, detenerStream]);
 
+  // Cada bloque se graba además como clip propio: al cambiar el bloque
+  // activo se cierra el clip anterior y se abre otro sobre el mismo stream.
+  // Los cortes siguen la posición del scroll, no la voz.
+  const cambiarClip = useCallback((idx: number) => {
+    const s = sesionRef.current;
+    const total = bloquesGrabRef.current.length;
+    if (!s || s.modo !== "completa" || total < 2) return;
+    const paraGrabar = streamParaGrabar(streamRef.current, cadenaRef.current);
+    if (!paraGrabar) return;
+    try {
+      const nuevo = crearGrabador(paraGrabar, elegirMimeType());
+      if (s.clipActual) detenerRecorder(s.clipActual.recorder);
+      s.clipActual = nuevo;
+      s.clips.push({
+        bloque: idx,
+        etiqueta: etiquetaBloque(idx, total),
+        fin: nuevo.fin,
+      });
+    } catch {
+      // Sin clip para este bloque; la toma completa sigue grabándose.
+    }
+  }, []);
+
+  // Bloque bajo la línea de lectura (mitad de la ventana del guion).
+  const calcularActivo = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const linea = el.scrollTop + el.clientHeight / 2 + 1;
+    let activo = 0;
+    el.querySelectorAll<HTMLElement>("[data-bloque]").forEach((b, i) => {
+      if (b.offsetTop <= linea) activo = i;
+    });
+    if (activo !== activoRef.current) {
+      activoRef.current = activo;
+      setBloqueActivo(activo);
+      cambiarClip(activo);
+    }
+  }, [cambiarClip]);
+
   // Scroll automático del guion.
   useEffect(() => {
     if (!scrolling || fase !== "grabar") return;
@@ -377,71 +598,102 @@ export function Teleprompter() {
         if (posRef.current >= max) {
           posRef.current = max;
           el.scrollTop = max;
+          calcularActivo();
           setScrolling(false);
           return;
         }
         el.scrollTop = posRef.current;
+        calcularActivo();
       }
       ultimo = ahora;
       raf = requestAnimationFrame(paso);
     };
     raf = requestAnimationFrame(paso);
     return () => cancelAnimationFrame(raf);
-  }, [scrolling, fase]);
+  }, [scrolling, fase, calcularActivo]);
 
-  // Cronómetro.
+  // Cronómetro + tiempo muerto inicial: ms desde que arranca el recorder
+  // hasta que el nivel del micrófono supera el umbral de voz por 1ª vez.
   useEffect(() => {
     if (!grabando) return;
     const id = setInterval(() => setSegundos((s) => s + 1), 1000);
-    return () => clearInterval(id);
+    const analyser = cadenaRef.current?.analyser;
+    const datos = analyser ? new Uint8Array(analyser.fftSize) : null;
+    const medidor = setInterval(() => {
+      const s = sesionRef.current;
+      if (!s || s.muertoMs !== null || !analyser || !datos) return;
+      if (nivelDb(analyser, datos) > UMBRAL_VOZ_DB)
+        s.muertoMs = Math.round(performance.now() - s.inicio);
+    }, 20);
+    return () => {
+      clearInterval(id);
+      clearInterval(medidor);
+    };
   }, [grabando]);
 
+  // Arranque: el recorder y el scroll se disparan en el mismo handler (un
+  // solo batch de React), sin pausa entre el clic/cuenta y el guion.
   const empezarGrabacion = useCallback(() => {
-    const stream = streamRef.current;
-    const cadena = cadenaRef.current;
-    if (!stream || !cadena) return;
-    // Video original + audio ya amplificado y limitado.
-    const streamGrabacion = new MediaStream([
-      ...stream.getVideoTracks(),
-      ...cadena.destino.stream.getAudioTracks(),
-    ]);
-    const mimeType = elegirMimeType();
-    let recorder: MediaRecorder;
+    const paraGrabar = streamParaGrabar(streamRef.current, cadenaRef.current);
+    if (!paraGrabar) return;
+    let principal: Grabador;
     try {
-      recorder = new MediaRecorder(streamGrabacion, {
-        ...(mimeType ? { mimeType } : {}),
-        audioBitsPerSecond: 192000,
-        videoBitsPerSecond: 8000000,
-      });
+      principal = crearGrabador(paraGrabar, elegirMimeType());
     } catch {
       setErrorGrabar("Este navegador no puede grabar video.");
       return;
     }
-    const trozos: Blob[] = [];
-    recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) trozos.push(e.data);
+    sesionRef.current = {
+      principal,
+      clipActual: null,
+      clips: [],
+      inicio: performance.now(),
+      muertoMs: null,
+      modo,
     };
-    recorder.onstop = () => {
-      const tipo = recorder.mimeType || mimeType || "video/webm";
-      const blob = new Blob(trozos, { type: tipo });
-      setResultado({
-        url: URL.createObjectURL(blob),
-        ext: tipo.includes("mp4") ? "mp4" : "webm",
-      });
-      detenerStream();
-    };
-    recorderRef.current = recorder;
-    recorder.start(1000);
+    cambiarClip(activoRef.current);
     setSegundos(0);
     setGrabando(true);
     setScrolling(true);
-  }, [detenerStream]);
+  }, [modo, cambiarClip]);
+
+  // Cierra los recorders y arma la toma cuando los blobs están listos.
+  function terminarGrabacion() {
+    const s = sesionRef.current;
+    if (!s) return;
+    sesionRef.current = null;
+    setGrabando(false);
+    setScrolling(false);
+    detenerRecorder(s.principal.recorder);
+    if (s.clipActual) detenerRecorder(s.clipActual.recorder);
+    const duracion = Math.round((performance.now() - s.inicio) / 1000);
+    void Promise.all([
+      s.principal.fin,
+      Promise.all(s.clips.map((c) => c.fin)),
+    ]).then(([archivo, archivosClips]) => {
+      const id = siguienteTomaRef.current++;
+      const toma: Toma = {
+        ...archivo,
+        id,
+        modo: s.modo,
+        segundos: duracion,
+        muertoMs: s.muertoMs,
+        clips: archivosClips.map((a, i) => ({
+          bloque: s.clips[i].bloque,
+          etiqueta: s.clips[i].etiqueta,
+          ...a,
+        })),
+      };
+      setTomas((prev) => [...prev, toma]);
+      setTomaId(id);
+      setEnResultado(true);
+      detenerStream();
+    });
+  }
 
   function alternarGrabacion() {
     if (grabando) {
-      recorderRef.current?.stop();
-      setGrabando(false);
-      setScrolling(false);
+      terminarGrabacion();
       return;
     }
     if (conteo !== null) {
@@ -450,11 +702,11 @@ export function Teleprompter() {
       setConteo(null);
       return;
     }
-    if (!cuentaRegresiva) {
+    if (cuentaSeg === 0) {
       empezarGrabacion();
       return;
     }
-    let n = 3;
+    let n = cuentaSeg;
     setConteo(n);
     conteoTimerRef.current = setInterval(() => {
       n -= 1;
@@ -470,31 +722,88 @@ export function Teleprompter() {
 
   function reiniciarPosicion() {
     posRef.current = 0;
+    activoRef.current = 0;
+    setBloqueActivo(0);
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
   }
 
-  function salir() {
+  // Corta la sesión en curso sin crear toma y libera sus blobs.
+  const descartarSesion = useCallback(() => {
+    const s = sesionRef.current;
+    sesionRef.current = null;
+    if (!s) return;
+    const fins = [s.principal.fin, ...s.clips.map((c) => c.fin)];
+    detenerRecorder(s.principal.recorder);
+    if (s.clipActual) detenerRecorder(s.clipActual.recorder);
+    fins.forEach((f) => void f.then((a) => URL.revokeObjectURL(a.url)));
+  }, []);
+
+  function liberarToma(t: Toma) {
+    URL.revokeObjectURL(t.url);
+    t.clips.forEach((c) => URL.revokeObjectURL(c.url));
+  }
+
+  function limpiarEstadoGrabacion() {
     if (conteoTimerRef.current) clearInterval(conteoTimerRef.current);
-    if (recorderRef.current?.state === "recording") {
-      recorderRef.current.onstop = null;
-      recorderRef.current.stop();
-    }
-    recorderRef.current = null;
+    descartarSesion();
     detenerStream();
-    if (resultado) URL.revokeObjectURL(resultado.url);
-    setResultado(null);
     setConteo(null);
     setGrabando(false);
     setScrolling(false);
     setErrorGrabar(null);
+  }
+
+  // Salir de la pantalla de grabación: con tomas en memoria vuelve a
+  // ellas; sin tomas, al editor.
+  function salir() {
+    limpiarEstadoGrabacion();
+    if (tomas.length > 0) {
+      setEnResultado(true);
+      return;
+    }
     setFase("preparar");
   }
 
-  function grabarDeNuevo() {
-    if (resultado) URL.revokeObjectURL(resultado.url);
-    setResultado(null);
+  // Cerrar = descartar todas las tomas y volver al editor.
+  function cerrarTodo() {
+    if (
+      tomas.length > 0 &&
+      !window.confirm("Se descartarán las tomas que no hayas descargado.")
+    )
+      return;
+    limpiarEstadoGrabacion();
+    tomas.forEach(liberarToma);
+    setTomas([]);
+    setTomaId(null);
+    setEnResultado(false);
+    setModo("completa");
+    setFase("preparar");
+  }
+
+  function descartarToma(id: number) {
+    const t = tomas.find((x) => x.id === id);
+    if (!t) return;
+    liberarToma(t);
+    const quedan = tomas.filter((x) => x.id !== id);
+    setTomas(quedan);
+    if (quedan.length === 0) {
+      setTomaId(null);
+      setEnResultado(false);
+      setModo("completa");
+      setFase("preparar");
+    } else if (tomaId === id) {
+      setTomaId(quedan[quedan.length - 1].id);
+    }
+  }
+
+  // Vuelve a la cámara para una toma nueva ("completa" o solo el gancho).
+  function regrabar(m: Modo) {
+    if (tomas.length >= MAX_TOMAS) return;
+    setModo(m);
+    setEnResultado(false);
     setSegundos(0);
     setErrorGrabar(null);
+    setScrolling(false);
     reiniciarPosicion();
     setIntento((n) => n + 1);
   }
@@ -508,6 +817,9 @@ export function Teleprompter() {
 
   function iniciar() {
     posRef.current = 0;
+    activoRef.current = 0;
+    setBloqueActivo(0);
+    setModo("completa");
     setSegundos(0);
     setErrorGrabar(null);
     setFase("grabar");
@@ -517,18 +829,18 @@ export function Teleprompter() {
   useEffect(() => {
     return () => {
       if (conteoTimerRef.current) clearInterval(conteoTimerRef.current);
-      const rec = recorderRef.current;
-      if (rec && rec.state !== "inactive") {
-        rec.onstop = null;
-        rec.stop();
-      }
+      descartarSesion();
+      tomasRef.current.forEach((t) => {
+        URL.revokeObjectURL(t.url);
+        t.clips.forEach((c) => URL.revokeObjectURL(c.url));
+      });
       detenerStream();
     };
-  }, [detenerStream]);
+  }, [detenerStream, descartarSesion]);
 
   // Atajos: espacio = pausar scroll, flechas = velocidad.
   useEffect(() => {
-    if (fase !== "grabar" || resultado) return;
+    if (fase !== "grabar" || enResultado) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === " ") {
         e.preventDefault();
@@ -544,12 +856,7 @@ export function Teleprompter() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [fase, resultado]);
-
-  const textoStyle = {
-    fontSize: `${tamano}px`,
-    transform: espejo ? "scaleX(-1)" : undefined,
-  };
+  }, [fase, enResultado]);
 
   if (fase === "preparar") {
     return (
@@ -572,14 +879,85 @@ export function Teleprompter() {
               Borrar todo
             </button>
           </div>
-          <textarea
-            id="guion"
-            ref={guionRef}
-            value={guion}
-            onChange={(e) => setGuion(e.target.value)}
-            placeholder="Pega o escribe aquí el guion…"
-            className="mt-2 h-80 w-full resize-y rounded-xl border border-gray-200 p-3 text-base text-gray-900 outline-none focus:border-[#54A6D8] focus:ring-2 focus:ring-[#54A6D8]/30 lg:h-[28rem]"
-          />
+          {/* Resaltado de muletillas: capa con el mismo texto y métricas
+              detrás del textarea (transparente), con scroll sincronizado. */}
+          <div className="relative mt-2">
+            <div
+              ref={resaltadoRef}
+              aria-hidden
+              className="pointer-events-none absolute inset-0 overflow-y-scroll whitespace-pre-wrap break-words rounded-xl border border-transparent p-3 text-base text-transparent"
+            >
+              {dividirMuletillas(guion).map((p, i) =>
+                p.muletilla ? (
+                  <mark key={i} className="rounded bg-amber-200 text-transparent">
+                    {p.texto}
+                  </mark>
+                ) : (
+                  <span key={i}>{p.texto}</span>
+                )
+              )}
+              {"​"}
+            </div>
+            <textarea
+              id="guion"
+              ref={guionRef}
+              value={guion}
+              onChange={(e) => setGuion(e.target.value)}
+              onScroll={(e) => {
+                if (resaltadoRef.current)
+                  resaltadoRef.current.scrollTop = e.currentTarget.scrollTop;
+              }}
+              placeholder="Pega o escribe aquí el guion. Separa Gancho, Desarrollo y Cierre con una línea en blanco."
+              className="relative block h-80 w-full resize-y overflow-y-scroll whitespace-pre-wrap break-words rounded-xl border border-gray-200 bg-transparent p-3 text-base text-gray-900 outline-none focus:border-[#54A6D8] focus:ring-2 focus:ring-[#54A6D8]/30 lg:h-[28rem]"
+            />
+          </div>
+          <p className="mt-2 text-xs text-gray-500">
+            <mark className="rounded bg-amber-200 px-1 text-gray-700">
+              muletillas
+            </mark>{" "}
+            resaltadas: «yo creo que», «o sea», «pero», «eh».
+          </p>
+
+          {bloques.length > 0 && (
+            <div className="mt-4 flex flex-col gap-2 border-t border-gray-100 pt-4">
+              {bloques.map((b, i) => (
+                <div
+                  key={i}
+                  className="flex items-center justify-between gap-3 text-sm"
+                >
+                  <span className="min-w-0 truncate text-gray-600">
+                    <span className="font-medium text-gray-900">
+                      {etiquetaBloque(i, bloques.length)}
+                    </span>{" "}
+                    · {b}
+                  </span>
+                  <span className="shrink-0 tabular-nums text-gray-500">
+                    {contarPalabras(b)} pal. · ≈{duraciones[i].toFixed(1)} s
+                  </span>
+                </div>
+              ))}
+              <div
+                className={`flex items-center justify-between text-sm font-semibold ${
+                  duracionTotal > LIMITE_DURACION_S
+                    ? "text-amber-600"
+                    : "text-gray-900"
+                }`}
+              >
+                <span>
+                  Total
+                  {duracionTotal > LIMITE_DURACION_S &&
+                    ` · pasa de ${LIMITE_DURACION_S} s, considera recortar`}
+                </span>
+                <span className="tabular-nums">
+                  ≈{duracionTotal.toFixed(1)} s
+                </span>
+              </div>
+              <p className="text-xs text-gray-500">
+                Estimado a {palabrasPorSeg} palabras/seg (preset{" "}
+                {PRESETS[preset].nombre}).
+              </p>
+            </div>
+          )}
         </section>
 
         <section className="flex flex-col gap-5 rounded-2xl border border-gray-100 bg-white p-5 sm:p-6">
@@ -594,6 +972,29 @@ export function Teleprompter() {
               className="accent-[#54A6D8]"
             />
           </label>
+          <div className="flex flex-col gap-1 text-sm text-gray-600">
+            Ritmo
+            <div className="grid grid-cols-3 gap-1" role="group">
+              {(Object.keys(PRESETS) as PresetId[]).map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  aria-pressed={preset === id}
+                  onClick={() => {
+                    setPreset(id);
+                    setVelocidad(PRESETS[id].velocidad);
+                  }}
+                  className={`rounded-lg border px-2 py-1.5 text-sm transition ${
+                    preset === id
+                      ? "border-[#54A6D8] bg-[#54A6D8]/10 font-semibold text-gray-900"
+                      : "border-gray-200 text-gray-600 hover:border-[#54A6D8]/40"
+                  }`}
+                >
+                  {PRESETS[id].nombre}
+                </button>
+              ))}
+            </div>
+          </div>
           <label className="flex flex-col gap-1 text-sm text-gray-600">
             Velocidad de scroll: {velocidad} px/s
             <input
@@ -626,14 +1027,40 @@ export function Teleprompter() {
             />
             Espejo (voltear texto)
           </label>
+          <div className="flex flex-col gap-1 text-sm text-gray-600">
+            Cuenta regresiva
+            <div className="grid grid-cols-4 gap-1" role="group">
+              {OPCIONES_CUENTA.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  aria-pressed={cuentaSeg === s}
+                  onClick={() => setCuentaSeg(s)}
+                  className={`rounded-lg border px-2 py-1.5 text-sm transition ${
+                    cuentaSeg === s
+                      ? "border-[#54A6D8] bg-[#54A6D8]/10 font-semibold text-gray-900"
+                      : "border-gray-200 text-gray-600 hover:border-[#54A6D8]/40"
+                  }`}
+                >
+                  {s === 0 ? "Sin" : `${s} s`}
+                </button>
+              ))}
+            </div>
+            {cuentaSeg === 0 && (
+              <span className="text-xs text-gray-500">
+                Sin cuenta: la grabación y el guion parten juntos al tocar
+                Grabar.
+              </span>
+            )}
+          </div>
           <label className="flex items-center gap-2 text-sm text-gray-700">
             <input
               type="checkbox"
-              checked={cuentaRegresiva}
-              onChange={(e) => setCuentaRegresiva(e.target.checked)}
+              checked={guias}
+              onChange={(e) => setGuias(e.target.checked)}
               className="h-4 w-4 accent-[#54A6D8]"
             />
-            Cuenta regresiva de 3 s
+            Guías en pantalla (zona segura y encuadre)
           </label>
           <label className="flex items-center gap-2 text-sm text-gray-700">
             <input
@@ -729,37 +1156,133 @@ export function Teleprompter() {
   const botonCtrl =
     "flex h-10 items-center justify-center gap-1.5 rounded-xl bg-white/15 px-3 text-sm font-medium text-white transition hover:bg-white/25";
 
+  const tomaSel = tomas.find((t) => t.id === tomaId) ?? tomas[tomas.length - 1];
+  const tomasLlenas = tomas.length >= MAX_TOMAS;
+  const botonPrimario =
+    "flex h-11 items-center gap-2 rounded-xl bg-[#54A6D8] px-5 text-sm font-semibold text-white hover:bg-[#4394c4]";
+
   return (
     <div className="fixed inset-0 z-50 bg-black text-white">
-      {resultado ? (
-        <div className="flex h-full flex-col items-center justify-center gap-4 p-4">
+      {enResultado && tomaSel ? (
+        <div className="flex h-full flex-col items-center gap-4 overflow-y-auto p-4">
           <video
-            src={resultado.url}
+            key={tomaSel.id}
+            src={tomaSel.url}
             controls
             playsInline
-            className="max-h-[75dvh] max-w-full rounded-xl"
+            className="max-h-[55dvh] max-w-full rounded-xl"
           />
+
+          <div className="flex flex-wrap justify-center gap-2">
+            {tomas.map((t, i) => (
+              <button
+                key={t.id}
+                type="button"
+                aria-pressed={t.id === tomaSel.id}
+                onClick={() => setTomaId(t.id)}
+                className={`h-9 rounded-full px-4 text-sm font-medium transition ${
+                  t.id === tomaSel.id
+                    ? "bg-[#54A6D8] text-white"
+                    : "bg-white/15 text-white hover:bg-white/25"
+                }`}
+              >
+                Toma {i + 1}
+                {t.modo === "gancho" ? " · gancho" : ""}
+              </button>
+            ))}
+          </div>
+
+          <p className="text-center text-sm text-white/80">
+            {tomaSel.segundos} s · Tiempo muerto inicial:{" "}
+            <strong className="tabular-nums">
+              {tomaSel.muertoMs !== null
+                ? `${tomaSel.muertoMs} ms`
+                : "sin voz detectada"}
+            </strong>
+          </p>
+
           <div className="flex flex-wrap justify-center gap-3">
             <a
-              href={resultado.url}
-              download={nombreArchivo(resultado.ext)}
-              className="flex h-11 items-center gap-2 rounded-xl bg-[#54A6D8] px-5 text-sm font-semibold text-white hover:bg-[#4394c4]"
+              href={tomaSel.url}
+              download={nombreArchivo(
+                tomaSel.ext,
+                `toma-${tomas.indexOf(tomaSel) + 1}${tomaSel.modo === "gancho" ? "-gancho" : ""}`
+              )}
+              className={botonPrimario}
             >
               <Download className="h-4 w-4" />
-              Descargar
+              Descargar toma
             </a>
-            <button type="button" onClick={grabarDeNuevo} className={botonCtrl}>
+            <button
+              type="button"
+              onClick={() => regrabar("gancho")}
+              disabled={tomasLlenas}
+              className={`${botonCtrl} disabled:opacity-50`}
+            >
+              <RotateCcw className="h-4 w-4" />
+              Regrabar gancho
+            </button>
+            <button
+              type="button"
+              onClick={() => regrabar("completa")}
+              disabled={tomasLlenas}
+              className={`${botonCtrl} disabled:opacity-50`}
+            >
               <RotateCcw className="h-4 w-4" />
               Grabar de nuevo
             </button>
-            <button type="button" onClick={salir} className={botonCtrl}>
+            <button
+              type="button"
+              onClick={() => descartarToma(tomaSel.id)}
+              className={botonCtrl}
+            >
+              <Trash2 className="h-4 w-4" />
+              Descartar
+            </button>
+            <button type="button" onClick={cerrarTodo} className={botonCtrl}>
               <X className="h-4 w-4" />
               Cerrar
             </button>
           </div>
+          {tomasLlenas && (
+            <p className="text-center text-xs text-white/70">
+              Máximo {MAX_TOMAS} tomas en memoria: descarta una para grabar otra.
+            </p>
+          )}
+
+          {tomaSel.clips.length > 0 && (
+            <div className="flex w-full max-w-md flex-col gap-2 border-t border-white/15 pt-4">
+              <span className="text-sm text-white/80">
+                Clips por bloque (corte según el scroll del guion)
+              </span>
+              <div className="flex flex-wrap gap-2">
+                {tomaSel.clips.map((c, i) => (
+                  <a
+                    key={i}
+                    href={c.url}
+                    download={nombreArchivo(
+                      c.ext,
+                      `toma-${tomas.indexOf(tomaSel) + 1}-${i + 1}-${c.etiqueta
+                        .toLowerCase()
+                        .replace(/\s+/g, "-")}`
+                    )}
+                    className={botonCtrl}
+                  >
+                    <Download className="h-4 w-4" />
+                    {c.etiqueta}
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         <>
+          {/* Marco vertical 9:16: lo que se ve es lo que se graba. */}
+          <div
+            className="relative mx-auto h-full max-w-full overflow-hidden"
+            style={{ aspectRatio: "9 / 16" }}
+          >
           <video
             ref={videoRef}
             autoPlay
@@ -769,26 +1292,74 @@ export function Teleprompter() {
             style={{ transform: "scaleX(-1)" }}
           />
 
-          {/* Overlay DOM: no forma parte del stream que se graba. */}
+          {/* Guías: overlay DOM, no forman parte del stream que se graba.
+              Los márgenes son aproximados (la UI de TikTok/Reels varía). */}
+          {guias && (
+            <div aria-hidden className="pointer-events-none absolute inset-0">
+              <div className="absolute inset-x-0 top-0 h-[10%] bg-red-500/20" />
+              <div className="absolute inset-x-0 bottom-0 flex h-[22%] items-end justify-center bg-red-500/20 pb-1 text-[10px] text-white/70">
+                descripción / usuario
+              </div>
+              <div className="absolute bottom-[22%] right-0 top-[10%] w-[14%] bg-red-500/20" />
+              <div className="absolute bottom-[22%] left-0 right-[14%] top-[10%] border border-dashed border-white/40" />
+              <div className="absolute left-1/2 top-[22%] h-[30%] w-[38%] -translate-x-1/2 rounded-[50%] border-2 border-dashed border-white/60" />
+              <div className="absolute inset-x-[22%] top-[33%] border-t border-dashed border-[#54A6D8]">
+                <span className="absolute -top-4 right-0 text-[10px] text-[#54A6D8]">
+                  ojos
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Guion por bloques (overlay DOM): el activo se ve completo y los
+              demás atenuados. Alto fijo para no mover el scroll. */}
           <div
             ref={scrollRef}
-            className="absolute inset-x-0 top-0 h-[38dvh] overflow-hidden bg-black/60 px-6 sm:px-16"
+            className={`absolute inset-x-0 top-0 h-[30%] overflow-hidden px-5 ${
+              guias ? "bg-black/40" : "bg-black/60"
+            }`}
           >
-            <div className="h-[30dvh]" />
-            <p
-              className="whitespace-pre-wrap text-center font-semibold leading-snug"
-              style={textoStyle}
-            >
-              {guion}
-            </p>
-            <div className="h-[38dvh]" />
+            <div className="h-1/2" />
+            {bloquesGrab.map((b, i) => {
+              const activo = i === bloqueActivo;
+              const escala = activo ? 1 : 0.9;
+              return (
+                <div
+                  key={i}
+                  data-bloque
+                  className="pb-[0.8em] text-center transition-[opacity,transform] duration-200"
+                  style={{
+                    opacity: activo ? 1 : 0.3,
+                    transform: `scale(${espejo ? -escala : escala}, ${escala})`,
+                  }}
+                >
+                  <span className="block text-xs font-semibold uppercase tracking-widest text-[#54A6D8]">
+                    {etiquetaBloque(i, bloquesGrab.length)}
+                  </span>
+                  <p
+                    className="whitespace-pre-wrap font-semibold leading-snug"
+                    style={{ fontSize: `${tamano}px` }}
+                  >
+                    {b}
+                  </p>
+                </div>
+              );
+            })}
+            <div className="h-1/2" />
           </div>
 
           {grabando && (
-            <div className="absolute right-4 top-[40dvh] flex items-center gap-2 rounded-full bg-black/60 px-3 py-1 text-sm font-semibold">
+            <div className="absolute right-4 top-[32%] flex items-center gap-2 rounded-full bg-black/60 px-3 py-1 text-sm font-semibold">
               <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-red-500" />
-              REC {formatoTiempo(segundos)}
+              REC {formatoTiempo(segundos)} ·{" "}
+              {etiquetaBloque(bloqueActivo, bloquesGrab.length)}
             </div>
+          )}
+
+          {avisoFormato && !grabando && (
+            <p className="absolute inset-x-2 bottom-[24%] rounded-lg bg-amber-500/90 px-3 py-1.5 text-center text-xs font-medium text-black">
+              {avisoFormato}
+            </p>
           )}
 
           {conteo !== null && (
@@ -807,12 +1378,13 @@ export function Teleprompter() {
               </button>
             </div>
           )}
+          </div>
 
           <div className="absolute inset-x-0 bottom-0 flex flex-wrap items-center justify-center gap-2 bg-gradient-to-t from-black/70 to-transparent p-4">
             <button
               type="button"
               onClick={alternarGrabacion}
-              disabled={!listo}
+              disabled={!listo || (!grabando && tomasLlenas)}
               className={`flex h-11 items-center gap-2 rounded-xl px-5 text-sm font-semibold text-white transition disabled:opacity-50 ${
                 grabando ? "bg-red-600 hover:bg-red-700" : "bg-[#54A6D8] hover:bg-[#4394c4]"
               }`}
@@ -844,6 +1416,16 @@ export function Teleprompter() {
               title="Volver al inicio del guion"
             >
               <RotateCcw className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setGuias((g) => !g)}
+              aria-pressed={guias}
+              className={botonCtrl}
+              title="Mostrar u ocultar guías (no se graban)"
+            >
+              <Frame className="h-4 w-4" />
+              Guías
             </button>
             <div className="flex items-center gap-1 text-xs" title="Flechas ↑↓">
               <button
