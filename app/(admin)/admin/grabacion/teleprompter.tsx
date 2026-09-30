@@ -124,8 +124,17 @@ function mensajeErrorMedia(err: unknown): string {
       return "No se encontró la cámara o el micrófono seleccionado. Revisa que estén conectados.";
     case "NotReadableError":
       return "La cámara o el micrófono están en uso por otra aplicación. Ciérrala y vuelve a intentar.";
-    default:
-      return "No se pudo acceder a la cámara y al micrófono.";
+    default: {
+      // Incluye TypeError (p. ej. mediaDevices undefined) y cualquier otro:
+      // se muestra el detalle para poder diagnosticarlo.
+      const detalle =
+        err instanceof Error
+          ? `${err.name}: ${err.message}`
+          : "error desconocido";
+      return err instanceof TypeError
+        ? `Este navegador no permite acceder a la cámara (requiere HTTPS). Detalle: ${detalle}`
+        : `No se pudo acceder a la cámara y al micrófono. Detalle: ${detalle}`;
+    }
   }
 }
 
@@ -412,6 +421,13 @@ export function Teleprompter() {
   // Los nombres de dispositivos solo aparecen tras conceder permiso.
   async function pedirPermiso() {
     setErrorPrep(null);
+    // Sin HTTPS (o en un navegador interno de otra app) mediaDevices no existe.
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setErrorPrep(
+        "Este navegador no puede acceder a la cámara. Abre la página en Chrome o Safari con HTTPS (no desde el navegador interno de otra app)."
+      );
+      return;
+    }
     try {
       const s = await navigator.mediaDevices.getUserMedia({
         video: true,
@@ -858,6 +874,12 @@ export function Teleprompter() {
     return () => window.removeEventListener("keydown", onKey);
   }, [fase, enResultado]);
 
+  const avisoErrorPrep = errorPrep && (
+    <p role="alert" className="text-sm text-red-600">
+      {errorPrep}
+    </p>
+  );
+
   if (fase === "preparar") {
     return (
       <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
@@ -1078,16 +1100,20 @@ export function Teleprompter() {
 
           <div className="flex flex-col gap-3 border-t border-gray-100 pt-4">
             {camaras.length === 0 && microfonos.length === 0 ? (
-              <button
-                type="button"
-                onClick={pedirPermiso}
-                className="flex items-center justify-center gap-2 rounded-xl border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 transition hover:border-[#54A6D8]/40"
-              >
-                <Camera className="h-4 w-4 text-[#54A6D8]" />
-                Permitir cámara y micrófono
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={pedirPermiso}
+                  className="flex items-center justify-center gap-2 rounded-xl border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 transition hover:border-[#54A6D8]/40"
+                >
+                  <Camera className="h-4 w-4 text-[#54A6D8]" />
+                  Permitir cámara y micrófono
+                </button>
+                {avisoErrorPrep}
+              </>
             ) : (
               <>
+                {avisoErrorPrep}
                 <label className="flex flex-col gap-1 text-sm text-gray-600">
                   Cámara
                   <select
@@ -1132,11 +1158,6 @@ export function Teleprompter() {
                   llegar al rojo.
                 </span>
               </div>
-            )}
-            {errorPrep && (
-              <p role="alert" className="text-sm text-red-600">
-                {errorPrep}
-              </p>
             )}
           </div>
 
