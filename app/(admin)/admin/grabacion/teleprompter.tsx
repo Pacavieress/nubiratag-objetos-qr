@@ -16,6 +16,7 @@ import {
   Type,
   X,
 } from "lucide-react";
+import { useInmersivo } from "../../inmersivo";
 
 const STORAGE_KEY = "grabacion-teleprompter";
 const TAMANO_MIN = 20;
@@ -342,6 +343,13 @@ export function Teleprompter() {
   useEffect(() => {
     bloquesGrabRef.current = bloquesGrab;
   }, [bloquesGrab]);
+
+  // La fase "grabar" ocupa todo el panel: oculta Sidebar, Header y BottomNav.
+  const { setActivo: setInmersivo } = useInmersivo();
+  useEffect(() => {
+    setInmersivo(fase === "grabar");
+    return () => setInmersivo(false);
+  }, [fase, setInmersivo]);
 
   useEffect(() => {
     tomasRef.current = tomas;
@@ -1256,15 +1264,15 @@ export function Teleprompter() {
     "flex h-11 items-center gap-2 rounded-xl bg-[#54A6D8] px-5 text-sm font-semibold text-white hover:bg-[#4394c4]";
 
   return (
-    <div className="fixed inset-0 z-50 bg-black text-white">
+    <div className="absolute inset-0 overflow-hidden overscroll-none bg-black pt-[env(safe-area-inset-top,0px)] text-white">
       {enResultado && tomaSel ? (
-        <div className="flex h-full flex-col items-center gap-4 overflow-y-auto p-4">
+        <div className="flex h-full flex-col items-center gap-4 overflow-y-auto overscroll-contain p-4">
           <video
             key={tomaSel.id}
             src={tomaSel.url}
             controls
             playsInline
-            className="max-h-[55dvh] max-w-full rounded-xl"
+            className="max-h-[55svh] max-w-full rounded-xl"
           />
 
           <div className="flex flex-wrap justify-center gap-2">
@@ -1371,10 +1379,12 @@ export function Teleprompter() {
           )}
         </div>
       ) : (
-        <>
-          {/* Marco vertical 9:16: lo que se ve es lo que se graba. */}
+        <div className="relative flex h-full w-full touch-none items-center justify-center">
+          {/* Marco vertical 9:16: lo que se ve es lo que se graba. Su alto
+              usa svh (con la barra de Safari visible) para que no cambie al
+              mostrarse u ocultarse la barra. */}
           <div
-            className="relative mx-auto h-full max-w-full overflow-hidden"
+            className="relative h-full max-h-[calc(100svh-env(safe-area-inset-top,0px))] max-w-full overflow-hidden"
             style={{ aspectRatio: "9 / 16" }}
           >
           <video
@@ -1474,7 +1484,7 @@ export function Teleprompter() {
           )}
           </div>
 
-          <div className="absolute inset-x-0 bottom-0 flex flex-wrap items-center justify-center gap-2 bg-gradient-to-t from-black/70 to-transparent p-4">
+          <div className="absolute inset-x-0 bottom-0 flex flex-wrap items-center justify-center gap-2 bg-gradient-to-t from-black/70 to-transparent px-4 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))]">
             <button
               type="button"
               onClick={alternarGrabacion}
@@ -1574,7 +1584,7 @@ export function Teleprompter() {
               Salir
             </button>
           </div>
-        </>
+        </div>
       )}
     </div>
   );

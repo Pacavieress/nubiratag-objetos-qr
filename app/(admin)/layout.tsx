@@ -5,6 +5,11 @@ import { BottomNav } from "./bottom-nav";
 import { LockScroll } from "@/components/lock-scroll";
 import { obtenerNombreColegioSesion } from "@/lib/colegioSesion";
 import { esperar } from "@/lib/esperar";
+import {
+  AreaContenido,
+  InmersivoProvider,
+  OcultarEnInmersivo,
+} from "./inmersivo";
 
 // La autorización de rol ya la resuelve proxy.ts (matcher /admin/:path*)
 // antes de que se llegue a renderizar este layout. Acá solo se usa
@@ -34,21 +39,27 @@ export default async function AdminLayout({
   ]);
 
   return (
-    <div className="flex h-dvh w-full flex-col overflow-hidden overscroll-none bg-gray-50 md:flex-row">
-      <LockScroll />
-      <Sidebar esSuperAdmin={esSuperAdmin} />
-      <div className="flex min-h-0 flex-1 flex-col">
-        <Header
-          email={session?.user?.email}
-          nombre={session?.user?.name}
-          rol={session?.user?.rol}
-          nombreColegio={nombreColegio}
-        />
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-6 [-webkit-overflow-scrolling:touch]">
-          {children}
+    <InmersivoProvider>
+      <div className="flex h-dvh w-full flex-col overflow-hidden overscroll-none bg-gray-50 md:flex-row">
+        <LockScroll />
+        <OcultarEnInmersivo>
+          <Sidebar esSuperAdmin={esSuperAdmin} />
+        </OcultarEnInmersivo>
+        <div className="flex min-h-0 flex-1 flex-col">
+          <OcultarEnInmersivo>
+            <Header
+              email={session?.user?.email}
+              nombre={session?.user?.name}
+              rol={session?.user?.rol}
+              nombreColegio={nombreColegio}
+            />
+          </OcultarEnInmersivo>
+          <AreaContenido>{children}</AreaContenido>
         </div>
+        <OcultarEnInmersivo>
+          <BottomNav esSuperAdmin={esSuperAdmin} />
+        </OcultarEnInmersivo>
       </div>
-      <BottomNav esSuperAdmin={esSuperAdmin} />
-    </div>
+    </InmersivoProvider>
   );
 }
