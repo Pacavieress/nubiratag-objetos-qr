@@ -25,7 +25,7 @@ const VELOCIDAD_MIN = 10;
 const VELOCIDAD_MAX = 300;
 const GANANCIA_MIN = 1;
 const GANANCIA_MAX = 6;
-const ASPECTO_VERTICAL = 9 / 16;
+const ASPECTO_DEFECTO = 16 / 9; // hasta que el video informa su tamaño real
 const MAX_TOMAS = 5;
 const LIMITE_DURACION_S = 18;
 // Umbral de "ya hay voz" para medir el tiempo muerto inicial (dBFS, después
@@ -301,7 +301,7 @@ export function Teleprompter() {
   const [conteo, setConteo] = useState<number | null>(null);
   const [segundos, setSegundos] = useState(0);
   const [intento, setIntento] = useState(0);
-  const [avisoFormato, setAvisoFormato] = useState<string | null>(null);
+  const [aspecto, setAspecto] = useState(ASPECTO_DEFECTO);
   const [modo, setModo] = useState<Modo>("completa");
   const [bloqueActivo, setBloqueActivo] = useState(0);
   const [tomas, setTomas] = useState<Toma[]>([]);
@@ -585,31 +585,16 @@ export function Teleprompter() {
       }
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          // "ideal" y no "exact": una webcam solo horizontal rechazaría
-          // un 9:16 exacto con OverconstrainedError.
           video: {
             deviceId: camaraId ? { exact: camaraId } : undefined,
-            width: { ideal: 1080 },
-            height: { ideal: 1920 },
-            aspectRatio: { ideal: ASPECTO_VERTICAL },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
           },
           audio: restriccionesAudio(microfonoId, procesarAudio),
         });
         if (cancelado) {
           stream.getTracks().forEach((t) => t.stop());
           return;
-        }
-        const ajustes = stream.getVideoTracks()[0]?.getSettings();
-        if (
-          ajustes?.width &&
-          ajustes.height &&
-          Math.abs(ajustes.width / ajustes.height - ASPECTO_VERTICAL) > 0.05
-        ) {
-          setAvisoFormato(
-            `Esta cámara entrega ${ajustes.width}×${ajustes.height}, no vertical. El video quedará con ese formato.`
-          );
-        } else {
-          setAvisoFormato(null);
         }
         streamRef.current = stream;
         cadenaRef.current = crearCadenaAudio(
@@ -1258,6 +1243,12 @@ export function Teleprompter() {
   const botonCtrl =
     "flex h-10 items-center justify-center gap-1.5 rounded-xl bg-white/15 px-3 text-sm font-medium text-white transition hover:bg-white/25";
 
+  // Proporción real del video (cambia, p. ej., al girar el teléfono).
+  function actualizarAspecto(e: React.SyntheticEvent<HTMLVideoElement>) {
+    const { videoWidth, videoHeight } = e.currentTarget;
+    if (videoWidth > 0 && videoHeight > 0) setAspecto(videoWidth / videoHeight);
+  }
+
   const tomaSel = tomas.find((t) => t.id === tomaId) ?? tomas[tomas.length - 1];
   const tomasLlenas = tomas.length >= MAX_TOMAS;
   const botonPrimario =
@@ -1380,37 +1371,49 @@ export function Teleprompter() {
         </div>
       ) : (
         <div className="relative flex h-full w-full min-w-0 touch-none items-center justify-center">
-          {/* Marco vertical 9:16: lo que se ve es lo que se graba. Su alto
-              usa svh (con la barra de Safari visible) para que no cambie al
-              mostrarse u ocultarse la barra. */}
+          {/* Marco con la proporción real de la cámara: lo que se ve es lo
+              que se graba. Se ajusta al área con svh (constante con la barra
+              de Safari). */}
           <div
-            className="relative h-full max-h-[calc(100svh-env(safe-area-inset-top,0px))] w-auto min-w-0 max-w-full shrink overflow-hidden"
-            style={{ aspectRatio: "9 / 16" }}
+            className="relative min-w-0 overflow-hidden"
+            style={{
+              aspectRatio: aspecto,
+              width: `min(100%, calc((100svh - env(safe-area-inset-top, 0px)) * ${aspecto}))`,
+            }}
           >
           <video
             ref={videoRef}
             autoPlay
             muted
             playsInline
-            className="h-full w-full object-cover"
+            className="h-full w-full object-contain"
+            onLoadedMetadata={actualizarAspecto}
+            onResize={actualizarAspecto}
             style={{ transform: "scaleX(-1)" }}
           />
 
-          {/* Guías: overlay DOM, no forman parte del stream que se graba.
-              Los márgenes son aproximados (la UI de TikTok/Reels varía). */}
+          {/* Guías: overlay DOM, no forman parte del stream que se graba. */}
           {guias && (
             <div aria-hidden className="pointer-events-none absolute inset-0">
-              <div className="absolute inset-x-0 top-0 h-[10%] bg-red-500/20" />
-              <div className="absolute inset-x-0 bottom-0 flex h-[22%] items-end justify-center bg-red-500/20 pb-1 text-[10px] text-white/70">
-                descripción / usuario
-              </div>
-              <div className="absolute bottom-[22%] right-0 top-[10%] w-[14%] bg-red-500/20" />
-              <div className="absolute bottom-[22%] left-0 right-[14%] top-[10%] border border-dashed border-white/40" />
-              <div className="absolute left-1/2 top-[22%] h-[30%] w-[38%] -translate-x-1/2 rounded-[50%] border-2 border-dashed border-white/60" />
-              <div className="absolute inset-x-[22%] top-[33%] border-t border-dashed border-[#54A6D8]">
-                <span className="absolute -top-4 right-0 text-[10px] text-[#54A6D8]">
-                  ojos
-                </span>
+              {/* Recorte vertical 9:16 centrado: lo que sobrevive si después
+                  se recorta a vertical. Solo con cámara horizontal. */}
+              {aspecto > 1 && (
+                <div
+                  className="absolute inset-y-0 left-1/2 -translate-x-1/2 border-x border-dashed border-white/40"
+                  style={{ aspectRatio: "9 / 16" }}
+                />
+              )}
+              {/* Óvalo de cara: su ancho sale de su alto (3:4), así no se
+                  deforma con la proporción del marco. */}
+              <div
+                className="absolute left-1/2 top-[22%] h-[68%] -translate-x-1/2 rounded-[50%] border-2 border-dashed border-white/60"
+                style={{ aspectRatio: "3 / 4" }}
+              >
+                <div className="absolute -inset-x-[12%] top-[36%] border-t border-dashed border-[#54A6D8]">
+                  <span className="absolute -top-4 right-0 text-[10px] text-[#54A6D8]">
+                    ojos
+                  </span>
+                </div>
               </div>
             </div>
           )}
@@ -1419,7 +1422,7 @@ export function Teleprompter() {
               demás atenuados. Alto fijo para no mover el scroll. */}
           <div
             ref={scrollRef}
-            className={`absolute inset-x-0 top-0 h-[30%] overflow-hidden px-5 ${
+            className={`absolute inset-x-0 top-0 h-[38%] overflow-hidden px-5 ${
               guias ? "bg-black/40" : "bg-black/60"
             }`}
           >
@@ -1453,17 +1456,11 @@ export function Teleprompter() {
           </div>
 
           {grabando && (
-            <div className="absolute right-4 top-[32%] flex items-center gap-2 rounded-full bg-black/60 px-3 py-1 text-sm font-semibold">
+            <div className="absolute right-4 top-[40%] flex items-center gap-2 rounded-full bg-black/60 px-3 py-1 text-sm font-semibold">
               <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-red-500" />
               REC {formatoTiempo(segundos)} ·{" "}
               {etiquetaBloque(bloqueActivo, bloquesGrab.length)}
             </div>
-          )}
-
-          {avisoFormato && !grabando && (
-            <p className="absolute inset-x-2 bottom-[24%] rounded-lg bg-amber-500/90 px-3 py-1.5 text-center text-xs font-medium text-black">
-              {avisoFormato}
-            </p>
           )}
 
           {conteo !== null && (
