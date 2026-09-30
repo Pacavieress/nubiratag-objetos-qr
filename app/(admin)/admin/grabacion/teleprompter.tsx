@@ -30,6 +30,9 @@ const LIMITE_DURACION_S = 18;
 // Umbral de "ya hay voz" para medir el tiempo muerto inicial (dBFS, después
 // de ganancia y limitador).
 const UMBRAL_VOZ_DB = -40;
+const TIMEOUT_PERMISO_MS = 10000;
+const MENSAJE_TIMEOUT_PERMISO =
+  "El navegador no respondió a la solicitud. Revisa el permiso del sitio en la configuración del navegador o ábrelo en Chrome o Safari.";
 
 type Dispositivo = { id: string; label: string };
 type Fase = "preparar" | "grabar";
@@ -211,19 +214,40 @@ type PresetId = keyof typeof PRESETS;
 
 const OPCIONES_CUENTA = [0, 1, 2, 3] as const;
 
-// Se arma con RegExp() y no como literal: lookarounds Unicode (\p{L}) que
-// el target ES2017 del tsconfig no acepta en un literal.
-const MULETILLAS = new RegExp(
-  "(?<![\\p{L}\\p{N}])(yo creo que|o sea|pero|eh+)(?![\\p{L}\\p{N}])",
-  "giu"
-);
+// Sin lookbehind (Safari/iOS < 16.4 rompe al parsearlo): el carácter previo
+// se captura en el grupo 1 y se reconstruye en dividirMuletillas. Se arma con
+// RegExp() y no como literal porque el target ES2017 del tsconfig no acepta
+// \p{L} en un literal; si el navegador tampoco lo soporta, queda en null y
+// el editor simplemente no resalta.
+const MULETILLAS: RegExp | null = (() => {
+  try {
+    return new RegExp(
+      "(^|[^\\p{L}\\p{N}])(yo creo que|o sea|pero|eh+)(?![\\p{L}\\p{N}])",
+      "giu"
+    );
+  } catch {
+    return null;
+  }
+})();
 
 function dividirMuletillas(texto: string): { texto: string; muletilla: boolean }[] {
-  // El split con grupo de captura deja las coincidencias en índices impares.
-  return texto
-    .split(MULETILLAS)
-    .map((t, i) => ({ texto: t, muletilla: i % 2 === 1 }))
-    .filter((p) => p.texto !== "");
+  if (!texto) return [];
+  if (!MULETILLAS) return [{ texto, muletilla: false }];
+  const partes: { texto: string; muletilla: boolean }[] = [];
+  let fin = 0;
+  MULETILLAS.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = MULETILLAS.exec(texto)) !== null) {
+    // m[1] es el separador previo: queda como texto normal.
+    const inicio = m.index + m[1].length;
+    if (inicio > fin)
+      partes.push({ texto: texto.slice(fin, inicio), muletilla: false });
+    partes.push({ texto: m[2], muletilla: true });
+    fin = inicio + m[2].length;
+  }
+  if (fin < texto.length)
+    partes.push({ texto: texto.slice(fin), muletilla: false });
+  return partes;
 }
 
 function contarPalabras(texto: string): number {
@@ -261,6 +285,13 @@ export function Teleprompter() {
   const [camaraId, setCamaraId] = useState("");
   const [microfonoId, setMicrofonoId] = useState("");
   const [errorPrep, setErrorPrep] = useState<string | null>(null);
+  const [pidiendo, setPidiendo] = useState(false);
+  // Diagnóstico para el celular; se lee en el cliente (evita desajuste de
+  // hidratación, porque en el servidor no existe window).
+  const [diagnostico, setDiagnostico] = useState<{
+    seguro: boolean;
+    mediaDevices: boolean;
+  } | null>(null);
 
   const [errorGrabar, setErrorGrabar] = useState<string | null>(null);
   const [listo, setListo] = useState(false);
@@ -413,6 +444,14 @@ export function Teleprompter() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setDiagnostico({
+      seguro: window.isSecureContext,
+      mediaDevices: !!navigator.mediaDevices,
+    });
+  }, []);
+
+  useEffect(() => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void enumerar();
@@ -428,15 +467,38 @@ export function Teleprompter() {
       );
       return;
     }
+    setPidiendo(true);
+    let vencido = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const s = await navigator.mediaDevices.getUserMedia({
+      const solicitud = navigator.mediaDevices.getUserMedia({
         video: true,
         audio: true,
       });
+      const espera = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          vencido = true;
+          reject(new Error("timeout"));
+        }, TIMEOUT_PERMISO_MS);
+      });
+      // Si la solicitud responde tarde (p. ej. el usuario acepta después del
+      // timeout), se sueltan los tracks y se refresca la lista de equipos.
+      solicitud.then(
+        (s) => {
+          if (!vencido) return;
+          s.getTracks().forEach((t) => t.stop());
+          void enumerar();
+        },
+        () => {}
+      );
+      const s = await Promise.race([solicitud, espera]);
       s.getTracks().forEach((t) => t.stop());
       await enumerar();
     } catch (err) {
-      setErrorPrep(mensajeErrorMedia(err));
+      setErrorPrep(vencido ? MENSAJE_TIMEOUT_PERMISO : mensajeErrorMedia(err));
+    } finally {
+      clearTimeout(timer);
+      setPidiendo(false);
     }
   }
 
@@ -874,10 +936,20 @@ export function Teleprompter() {
     return () => window.removeEventListener("keydown", onKey);
   }, [fase, enResultado]);
 
-  const avisoErrorPrep = errorPrep && (
-    <p role="alert" className="text-sm text-red-600">
-      {errorPrep}
-    </p>
+  const avisoErrorPrep = (
+    <>
+      {errorPrep && (
+        <p role="alert" className="text-sm text-red-600">
+          {errorPrep}
+        </p>
+      )}
+      {diagnostico && (
+        <p className="text-[11px] text-gray-400">
+          Contexto seguro (HTTPS): {diagnostico.seguro ? "sí" : "no"} ·
+          mediaDevices: {diagnostico.mediaDevices ? "sí" : "no"}
+        </p>
+      )}
+    </>
   );
 
   if (fase === "preparar") {
@@ -1104,10 +1176,11 @@ export function Teleprompter() {
                 <button
                   type="button"
                   onClick={pedirPermiso}
-                  className="flex items-center justify-center gap-2 rounded-xl border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 transition hover:border-[#54A6D8]/40"
+                  disabled={pidiendo}
+                  className="flex items-center justify-center gap-2 rounded-xl border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 transition hover:border-[#54A6D8]/40 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <Camera className="h-4 w-4 text-[#54A6D8]" />
-                  Permitir cámara y micrófono
+                  {pidiendo ? "Solicitando permiso..." : "Permitir cámara y micrófono"}
                 </button>
                 {avisoErrorPrep}
               </>
