@@ -962,8 +962,8 @@ export function Teleprompter() {
 
   if (fase === "preparar") {
     return (
-      <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
-        <section className="rounded-2xl border border-gray-100 bg-white p-5 sm:p-6">
+      <div className="grid w-full max-w-full grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[2fr_1fr]">
+        <section className="min-w-0 rounded-2xl border border-gray-100 bg-white p-5 sm:p-6">
           <div className="flex items-center justify-between">
             <label
               htmlFor="guion"
@@ -1062,7 +1062,7 @@ export function Teleprompter() {
           )}
         </section>
 
-        <section className="flex flex-col gap-5 rounded-2xl border border-gray-100 bg-white p-5 sm:p-6">
+        <section className="flex min-w-0 flex-col gap-5 rounded-2xl border border-gray-100 bg-white p-5 sm:p-6">
           <label className="flex flex-col gap-1 text-sm text-gray-600">
             Tamaño de letra: {tamano}px
             <input
@@ -1200,7 +1200,7 @@ export function Teleprompter() {
                   <select
                     value={camaraId}
                     onChange={(e) => setCamaraId(e.target.value)}
-                    className="rounded-xl border border-gray-200 bg-white p-2 text-sm text-gray-900"
+                    className="w-full min-w-0 rounded-xl border border-gray-200 bg-white p-2 text-sm text-gray-900"
                   >
                     {camaras.map((c) => (
                       <option key={c.id} value={c.id}>
@@ -1214,7 +1214,7 @@ export function Teleprompter() {
                   <select
                     value={microfonoId}
                     onChange={(e) => setMicrofonoId(e.target.value)}
-                    className="rounded-xl border border-gray-200 bg-white p-2 text-sm text-gray-900"
+                    className="w-full min-w-0 rounded-xl border border-gray-200 bg-white p-2 text-sm text-gray-900"
                   >
                     {microfonos.map((m) => (
                       <option key={m.id} value={m.id}>
@@ -1379,12 +1379,12 @@ export function Teleprompter() {
           )}
         </div>
       ) : (
-        <div className="relative flex h-full w-full touch-none items-center justify-center">
+        <div className="relative flex h-full w-full min-w-0 touch-none items-center justify-center">
           {/* Marco vertical 9:16: lo que se ve es lo que se graba. Su alto
               usa svh (con la barra de Safari visible) para que no cambie al
               mostrarse u ocultarse la barra. */}
           <div
-            className="relative h-full max-h-[calc(100svh-env(safe-area-inset-top,0px))] max-w-full overflow-hidden"
+            className="relative h-full max-h-[calc(100svh-env(safe-area-inset-top,0px))] w-auto min-w-0 max-w-full shrink overflow-hidden"
             style={{ aspectRatio: "9 / 16" }}
           >
           <video

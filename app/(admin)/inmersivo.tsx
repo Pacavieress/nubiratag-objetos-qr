@@ -34,7 +34,7 @@ export function AreaContenido({ children }: { children: React.ReactNode }) {
       className={`min-h-0 flex-1 overscroll-contain ${
         activo
           ? "relative overflow-hidden"
-          : "overflow-y-auto p-6 [-webkit-overflow-scrolling:touch]"
+          : "overflow-y-auto overflow-x-hidden p-6 [-webkit-overflow-scrolling:touch]"
       }`}
     >
       {children}

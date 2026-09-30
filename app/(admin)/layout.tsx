@@ -45,7 +45,7 @@ export default async function AdminLayout({
         <OcultarEnInmersivo>
           <Sidebar esSuperAdmin={esSuperAdmin} />
         </OcultarEnInmersivo>
-        <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <OcultarEnInmersivo>
             <Header
               email={session?.user?.email}
