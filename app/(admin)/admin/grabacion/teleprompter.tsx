@@ -21,8 +21,9 @@ import { useInmersivo } from "../../inmersivo";
 const STORAGE_KEY = "grabacion-teleprompter";
 const TAMANO_MIN = 20;
 const TAMANO_MAX = 120;
-const VELOCIDAD_MIN = 10;
-const VELOCIDAD_MAX = 300;
+const MULT_MIN = 0.7;
+const MULT_MAX = 1.6;
+const RESALTE = ["bg-[#54A6D8]/40"]; // clases de la línea que se está leyendo
 const GANANCIA_MIN = 1;
 const GANANCIA_MAX = 6;
 const ASPECTO_DEFECTO = 16 / 9; // hasta que el video informa su tamaño real
@@ -205,12 +206,12 @@ function formatoTiempo(seg: number): string {
   return `${p(Math.floor(seg / 60))}:${p(seg % 60)}`;
 }
 
-// Ritmo: velocidad de scroll (px/s) y palabras/seg con que se estima la
-// duración de cada bloque.
+// Ritmo: palabras/seg con que avanza el scroll y se estima la duración de
+// cada bloque.
 const PRESETS = {
-  normal: { nombre: "Normal", velocidad: 60, palabrasPorSeg: 2.5 },
-  dinamico: { nombre: "Dinámico", velocidad: 90, palabrasPorSeg: 2.8 },
-  rafaga: { nombre: "Ráfaga", velocidad: 130, palabrasPorSeg: 3.3 },
+  normal: { nombre: "Normal", palabrasPorSeg: 2.5 },
+  dinamico: { nombre: "Dinámico", palabrasPorSeg: 2.8 },
+  rafaga: { nombre: "Ráfaga", palabrasPorSeg: 3.3 },
 } as const;
 type PresetId = keyof typeof PRESETS;
 
@@ -264,6 +265,11 @@ function dividirBloques(guion: string): string[] {
     .filter(Boolean);
 }
 
+// Suma/resta al multiplicador de ritmo, en pasos de 0.1 dentro del rango.
+function ajustarMult(v: number, delta: number): number {
+  return Math.min(MULT_MAX, Math.max(MULT_MIN, Math.round((v + delta) * 10) / 10));
+}
+
 function etiquetaBloque(i: number, total: number): string {
   if (i === 0) return "Gancho";
   if (i === total - 1) return "Cierre";
@@ -274,14 +280,14 @@ export function Teleprompter() {
   const [fase, setFase] = useState<Fase>("preparar");
   const [guion, setGuion] = useState("");
   const [tamano, setTamano] = useState(48);
-  const [velocidad, setVelocidad] = useState(60);
+  const [mult, setMult] = useState(1);
   const [espejo, setEspejo] = useState(false);
   const [cuentaSeg, setCuentaSeg] = useState<number>(1);
   const [guias, setGuias] = useState(true);
   const [cortarAlFinal, setCortarAlFinal] = useState(true);
   // Momento (performance.now) en que el scroll llegó al final; null = sin vigilar.
   const [finScroll, setFinScroll] = useState<number | null>(null);
-  const [preset, setPreset] = useState<PresetId>("normal");
+  const [preset, setPreset] = useState<PresetId>("dinamico");
   const [procesarAudio, setProcesarAudio] = useState(false);
   const [ganancia, setGanancia] = useState(3);
 
@@ -326,7 +332,11 @@ export function Teleprompter() {
   const gananciaRef = useRef(ganancia);
   const scrollRef = useRef<HTMLDivElement>(null);
   const posRef = useRef(0);
-  const velocidadRef = useRef(velocidad);
+  const ritmoRef = useRef({ palabrasPorSeg: 2.8, mult: 1, palabras: 1 });
+  const lineasRef = useRef<
+    { top: number; palabras: HTMLElement[]; bloque: number }[]
+  >([]);
+  const lineaActivaRef = useRef(-1);
   const conteoTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const bloques = useMemo(() => dividirBloques(guion), [guion]);
@@ -339,9 +349,41 @@ export function Teleprompter() {
   const duraciones = bloques.map((b) => contarPalabras(b) / palabrasPorSeg);
   const duracionTotal = duraciones.reduce((a, b) => a + b, 0);
 
+  // Palabras del guion visible, cada una con su bloque: se muestran como un
+  // solo flujo continuo (un span por palabra para poder resaltar la línea).
+  const palabras = useMemo(
+    () =>
+      bloquesGrab.flatMap((b, bi) =>
+        b
+          .split(/\s+/)
+          .filter(Boolean)
+          .map((t) => ({ t, b: bi }))
+      ),
+    [bloquesGrab]
+  );
+  // Memorizado: los cambios de bloque/REC no deben re-renderizar cada span.
+  const textoGuion = useMemo(
+    () => (
+      <p
+        className="text-center font-semibold leading-snug"
+        style={{
+          fontSize: `${tamano}px`,
+          transform: espejo ? "scaleX(-1)" : undefined,
+        }}
+      >
+        {palabras.map((p, i) => (
+          <span key={i} data-w data-b={p.b} className="rounded-sm">
+            {p.t}{" "}
+          </span>
+        ))}
+      </p>
+    ),
+    [palabras, tamano, espejo]
+  );
+
   useEffect(() => {
-    velocidadRef.current = velocidad;
-  }, [velocidad]);
+    ritmoRef.current = { palabrasPorSeg, mult, palabras: palabras.length };
+  }, [palabrasPorSeg, mult, palabras]);
 
   // La fase "grabar" ocupa todo el panel: oculta Sidebar, Header y BottomNav.
   const { setActivo: setInmersivo } = useInmersivo();
@@ -360,7 +402,7 @@ export function Teleprompter() {
     if (cadenaRef.current) cadenaRef.current.gain.gain.value = ganancia;
   }, [ganancia]);
 
-  // Persistencia: solo guion, tamaño y velocidad.
+  // Persistencia: guion y preferencias (nada de la grabación en curso).
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -368,7 +410,7 @@ export function Teleprompter() {
         const d = JSON.parse(raw) as {
           guion?: string;
           tamano?: number;
-          velocidad?: number;
+          multiplicador?: number;
           ganancia?: number;
           cuentaSeg?: number;
           guias?: boolean;
@@ -378,7 +420,8 @@ export function Teleprompter() {
         // eslint-disable-next-line react-hooks/set-state-in-effect
         if (typeof d.guion === "string") setGuion(d.guion);
         if (typeof d.tamano === "number") setTamano(d.tamano);
-        if (typeof d.velocidad === "number") setVelocidad(d.velocidad);
+        if (typeof d.multiplicador === "number")
+          setMult(Math.min(MULT_MAX, Math.max(MULT_MIN, d.multiplicador)));
         if (
           typeof d.cuentaSeg === "number" &&
           (OPCIONES_CUENTA as readonly number[]).includes(d.cuentaSeg)
@@ -407,7 +450,7 @@ export function Teleprompter() {
         JSON.stringify({
           guion,
           tamano,
-          velocidad,
+          multiplicador: mult,
           ganancia,
           cuentaSeg,
           guias,
@@ -421,7 +464,7 @@ export function Teleprompter() {
   }, [
     guion,
     tamano,
-    velocidad,
+    mult,
     ganancia,
     cuentaSeg,
     guias,
@@ -629,20 +672,63 @@ export function Teleprompter() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fase, intento, detenerStream]);
 
-  // Bloque bajo la línea de lectura (mitad de la ventana del guion).
+  // Resalta la línea que cruza la línea de lectura (mitad de la ventana del
+  // guion) y deduce de ella el bloque actual. El resaltado va por DOM y no
+  // por estado para no re-renderizar cada palabra en cada cambio de línea.
   const calcularActivo = useCallback(() => {
     const el = scrollRef.current;
-    if (!el) return;
+    const lineas = lineasRef.current;
+    if (!el || lineas.length === 0) return;
     const linea = el.scrollTop + el.clientHeight / 2 + 1;
-    let activo = 0;
-    el.querySelectorAll<HTMLElement>("[data-bloque]").forEach((b, i) => {
-      if (b.offsetTop <= linea) activo = i;
-    });
-    if (activo !== activoRef.current) {
-      activoRef.current = activo;
-      setBloqueActivo(activo);
+    let idx = 0;
+    for (let i = 0; i < lineas.length; i++) {
+      if (lineas[i].top <= linea) idx = i;
+      else break;
+    }
+    if (idx === lineaActivaRef.current) return;
+    lineas[lineaActivaRef.current]?.palabras.forEach((w) =>
+      w.classList.remove(...RESALTE)
+    );
+    lineas[idx].palabras.forEach((w) => w.classList.add(...RESALTE));
+    lineaActivaRef.current = idx;
+    const b = lineas[idx].bloque;
+    if (b !== activoRef.current) {
+      activoRef.current = b;
+      setBloqueActivo(b);
     }
   }, []);
+
+  // Agrupa las palabras por línea visual y reaplica el resaltado.
+  const medirLineas = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const lineas: typeof lineasRef.current = [];
+    el.querySelectorAll<HTMLElement>("[data-w]").forEach((w) => {
+      w.classList.remove(...RESALTE); // por si React reutilizó el nodo
+      const ult = lineas[lineas.length - 1];
+      if (ult && Math.abs(w.offsetTop - ult.top) < 4) ult.palabras.push(w);
+      else
+        lineas.push({
+          top: w.offsetTop,
+          palabras: [w],
+          bloque: Number(w.dataset.b),
+        });
+    });
+    lineasRef.current = lineas;
+    lineaActivaRef.current = -1;
+    calcularActivo();
+  }, [calcularActivo]);
+
+  // Remide al cambiar el texto, el tamaño de letra o el tamaño del marco.
+  useEffect(() => {
+    if (fase !== "grabar" || enResultado) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    medirLineas();
+    const ro = new ResizeObserver(() => medirLineas());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [fase, enResultado, palabras, tamano, medirLineas]);
 
   // Scroll automático del guion.
   useEffect(() => {
@@ -652,8 +738,12 @@ export function Teleprompter() {
     const paso = (ahora: number) => {
       const el = scrollRef.current;
       if (el) {
-        posRef.current += (velocidadRef.current * (ahora - ultimo)) / 1000;
         const max = el.scrollHeight - el.clientHeight;
+        // max = altura del texto: los px/s salen de las palabras por segundo
+        // del preset y no dependen del tamaño de letra.
+        const { palabrasPorSeg: wps, mult: m, palabras: n } = ritmoRef.current;
+        const pxs = (max * wps * m) / Math.max(1, n);
+        posRef.current += (pxs * (ahora - ultimo)) / 1000;
         if (posRef.current >= max) {
           posRef.current = max;
           el.scrollTop = max;
@@ -816,6 +906,7 @@ export function Teleprompter() {
     setBloqueActivo(0);
     setFinScroll(null);
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    calcularActivo();
   }
 
   // Corta la sesión en curso sin crear toma y libera sus blobs.
@@ -933,10 +1024,10 @@ export function Teleprompter() {
         alternarScroll();
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
-        setVelocidad((v) => Math.min(VELOCIDAD_MAX, v + 10));
+        setMult((v) => ajustarMult(v, 0.1));
       } else if (e.key === "ArrowDown") {
         e.preventDefault();
-        setVelocidad((v) => Math.max(VELOCIDAD_MIN, v - 10));
+        setMult((v) => ajustarMult(v, -0.1));
       }
     };
     window.addEventListener("keydown", onKey);
@@ -1081,10 +1172,7 @@ export function Teleprompter() {
                   key={id}
                   type="button"
                   aria-pressed={preset === id}
-                  onClick={() => {
-                    setPreset(id);
-                    setVelocidad(PRESETS[id].velocidad);
-                  }}
+                  onClick={() => setPreset(id)}
                   className={`rounded-lg border px-2 py-1.5 text-sm transition ${
                     preset === id
                       ? "border-[#54A6D8] bg-[#54A6D8]/10 font-semibold text-gray-900"
@@ -1097,13 +1185,14 @@ export function Teleprompter() {
             </div>
           </div>
           <label className="flex flex-col gap-1 text-sm text-gray-600">
-            Velocidad de scroll: {velocidad} px/s
+            Velocidad: {mult.toFixed(1)}x
             <input
               type="range"
-              min={VELOCIDAD_MIN}
-              max={VELOCIDAD_MAX}
-              value={velocidad}
-              onChange={(e) => setVelocidad(Number(e.target.value))}
+              min={MULT_MIN}
+              max={MULT_MAX}
+              step={0.1}
+              value={mult}
+              onChange={(e) => setMult(Number(e.target.value))}
               className="accent-[#54A6D8]"
             />
           </label>
@@ -1421,8 +1510,9 @@ export function Teleprompter() {
             </div>
           )}
 
-          {/* Guion por bloques (overlay DOM): el activo se ve completo y los
-              demás atenuados. Alto fijo para no mover el scroll. */}
+          {/* Guion (overlay DOM): un solo flujo continuo; solo la línea que
+              cruza la línea de lectura va resaltada. Alto fijo para no mover
+              el scroll. */}
           <div
             ref={scrollRef}
             className={`absolute inset-x-0 top-0 h-[38%] overflow-hidden px-5 ${
@@ -1430,31 +1520,7 @@ export function Teleprompter() {
             }`}
           >
             <div className="h-1/2" />
-            {bloquesGrab.map((b, i) => {
-              const activo = i === bloqueActivo;
-              const escala = activo ? 1 : 0.9;
-              return (
-                <div
-                  key={i}
-                  data-bloque
-                  className="pb-[0.8em] text-center transition-[opacity,transform] duration-200"
-                  style={{
-                    opacity: activo ? 1 : 0.3,
-                    transform: `scale(${espejo ? -escala : escala}, ${escala})`,
-                  }}
-                >
-                  <span className="block text-xs font-semibold uppercase tracking-widest text-[#54A6D8]">
-                    {etiquetaBloque(i, bloquesGrab.length)}
-                  </span>
-                  <p
-                    className="whitespace-pre-wrap font-semibold leading-snug"
-                    style={{ fontSize: `${tamano}px` }}
-                  >
-                    {b}
-                  </p>
-                </div>
-              );
-            })}
+            {textoGuion}
             <div className="h-1/2" />
           </div>
 
@@ -1535,20 +1601,16 @@ export function Teleprompter() {
               <button
                 type="button"
                 aria-label="Bajar velocidad"
-                onClick={() =>
-                  setVelocidad((v) => Math.max(VELOCIDAD_MIN, v - 10))
-                }
+                onClick={() => setMult((v) => ajustarMult(v, -0.1))}
                 className={botonCtrl}
               >
                 <Minus className="h-4 w-4" />
               </button>
-              <span className="w-16 text-center">{velocidad} px/s</span>
+              <span className="w-16 text-center">{mult.toFixed(1)}x</span>
               <button
                 type="button"
                 aria-label="Subir velocidad"
-                onClick={() =>
-                  setVelocidad((v) => Math.min(VELOCIDAD_MAX, v + 10))
-                }
+                onClick={() => setMult((v) => ajustarMult(v, 0.1))}
                 className={botonCtrl}
               >
                 <Plus className="h-4 w-4" />
