@@ -270,6 +270,17 @@ function ajustarMult(v: number, delta: number): number {
   return Math.min(MULT_MAX, Math.max(MULT_MIN, Math.round((v + delta) * 10) / 10));
 }
 
+// Índice de la línea del guion que está en la línea de lectura para una
+// posición de scroll dada (la última cuyo inicio ya se alcanzó).
+function indiceLinea(lineas: { start: number }[], pos: number): number {
+  let idx = 0;
+  for (let i = 0; i < lineas.length; i++) {
+    if (lineas[i].start <= pos + 0.5) idx = i;
+    else break;
+  }
+  return idx;
+}
+
 function etiquetaBloque(i: number, total: number): string {
   if (i === 0) return "Gancho";
   if (i === total - 1) return "Cierre";
@@ -332,9 +343,10 @@ export function Teleprompter() {
   const gananciaRef = useRef(ganancia);
   const scrollRef = useRef<HTMLDivElement>(null);
   const posRef = useRef(0);
-  const ritmoRef = useRef({ palabrasPorSeg: 2.8, mult: 1, palabras: 1 });
+  const ritmoRef = useRef({ palabrasPorSeg: 2.8, mult: 1 });
+  // start/len: tramo de scroll de la línea; n: sus palabras; resalte: su span.
   const lineasRef = useRef<
-    { top: number; palabras: HTMLElement[]; bloque: number }[]
+    { start: number; len: number; n: number; bloque: number; resalte: HTMLElement }[]
   >([]);
   const lineaActivaRef = useRef(-1);
   const conteoTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -349,41 +361,57 @@ export function Teleprompter() {
   const duraciones = bloques.map((b) => contarPalabras(b) / palabrasPorSeg);
   const duracionTotal = duraciones.reduce((a, b) => a + b, 0);
 
-  // Palabras del guion visible, cada una con su bloque: se muestran como un
-  // solo flujo continuo (un span por palabra para poder resaltar la línea).
-  const palabras = useMemo(
+  // Líneas del guion visible (cada \n es una línea; las líneas en blanco
+  // separan bloques y en pantalla solo dejan un pequeño espacio).
+  const lineasGuion = useMemo(
     () =>
       bloquesGrab.flatMap((b, bi) =>
         b
-          .split(/\s+/)
+          .split("\n")
+          .map((l) => l.trim())
           .filter(Boolean)
-          .map((t) => ({ t, b: bi }))
+          .map((texto, li) => ({
+            texto,
+            b: bi,
+            n: contarPalabras(texto),
+            inicio: li === 0,
+          }))
       ),
     [bloquesGrab]
   );
-  // Memorizado: los cambios de bloque/REC no deben re-renderizar cada span.
+  // Memorizado: los cambios de bloque/REC no deben re-renderizar el guion.
+  // El span en línea con box-decoration-clone hace que, si una línea se parte
+  // por el ancho, el resaltado cubra todos sus fragmentos.
   const textoGuion = useMemo(
     () => (
-      <p
+      <div
         className="text-center font-semibold leading-snug"
         style={{
           fontSize: `${tamano}px`,
           transform: espejo ? "scaleX(-1)" : undefined,
         }}
       >
-        {palabras.map((p, i) => (
-          <span key={i} data-w data-b={p.b} className="rounded-sm">
-            {p.t}{" "}
-          </span>
+        {lineasGuion.map((l, i) => (
+          <p
+            key={i}
+            data-l
+            data-b={l.b}
+            data-n={l.n}
+            className={l.inicio && i > 0 ? "mt-[0.6em]" : undefined}
+          >
+            <span className="box-decoration-clone rounded-sm px-1">
+              {l.texto}
+            </span>
+          </p>
         ))}
-      </p>
+      </div>
     ),
-    [palabras, tamano, espejo]
+    [lineasGuion, tamano, espejo]
   );
 
   useEffect(() => {
-    ritmoRef.current = { palabrasPorSeg, mult, palabras: palabras.length };
-  }, [palabrasPorSeg, mult, palabras]);
+    ritmoRef.current = { palabrasPorSeg, mult };
+  }, [palabrasPorSeg, mult]);
 
   // La fase "grabar" ocupa todo el panel: oculta Sidebar, Header y BottomNav.
   const { setActivo: setInmersivo } = useInmersivo();
@@ -672,24 +700,19 @@ export function Teleprompter() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fase, intento, detenerStream]);
 
-  // Resalta la línea que cruza la línea de lectura (mitad de la ventana del
-  // guion) y deduce de ella el bloque actual. El resaltado va por DOM y no
-  // por estado para no re-renderizar cada palabra en cada cambio de línea.
+  // Resalta la línea del guion que cruza la línea de lectura (mitad de la
+  // ventana) y deduce de ella el bloque actual. El resaltado va por DOM y no
+  // por estado para no re-renderizar el guion en cada cambio de línea.
   const calcularActivo = useCallback(() => {
     const el = scrollRef.current;
     const lineas = lineasRef.current;
     if (!el || lineas.length === 0) return;
-    const linea = el.scrollTop + el.clientHeight / 2 + 1;
-    let idx = 0;
-    for (let i = 0; i < lineas.length; i++) {
-      if (lineas[i].top <= linea) idx = i;
-      else break;
-    }
+    // La línea de lectura está en el centro y el texto empieza ahí: coincide
+    // con scrollTop.
+    const idx = indiceLinea(lineas, el.scrollTop);
     if (idx === lineaActivaRef.current) return;
-    lineas[lineaActivaRef.current]?.palabras.forEach((w) =>
-      w.classList.remove(...RESALTE)
-    );
-    lineas[idx].palabras.forEach((w) => w.classList.add(...RESALTE));
+    lineas[lineaActivaRef.current]?.resalte.classList.remove(...RESALTE);
+    lineas[idx].resalte.classList.add(...RESALTE);
     lineaActivaRef.current = idx;
     const b = lineas[idx].bloque;
     if (b !== activoRef.current) {
@@ -698,21 +721,28 @@ export function Teleprompter() {
     }
   }, []);
 
-  // Agrupa las palabras por línea visual y reaplica el resaltado.
+  // Mide el tramo de scroll de cada línea del guion y reaplica el resaltado.
+  // Se usan rects relativos al contenedor y no offsetTop: no dependen de qué
+  // ancestro sea el offsetParent ni de transforms como el espejo.
   const medirLineas = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const lineas: typeof lineasRef.current = [];
-    el.querySelectorAll<HTMLElement>("[data-w]").forEach((w) => {
-      w.classList.remove(...RESALTE); // por si React reutilizó el nodo
-      const ult = lineas[lineas.length - 1];
-      if (ult && Math.abs(w.offsetTop - ult.top) < 4) ult.palabras.push(w);
-      else
-        lineas.push({
-          top: w.offsetTop,
-          palabras: [w],
-          bloque: Number(w.dataset.b),
-        });
+    const origen = el.getBoundingClientRect().top - el.scrollTop;
+    const ps = Array.from(el.querySelectorAll<HTMLElement>("[data-l]"));
+    const tops = ps.map((p) => p.getBoundingClientRect().top - origen);
+    const max = el.scrollHeight - el.clientHeight;
+    const lineas = ps.map((p, i) => {
+      const span = p.firstElementChild as HTMLElement;
+      span.classList.remove(...RESALTE); // por si React reutilizó el nodo
+      const start = tops[i] - tops[0];
+      const fin = i + 1 < ps.length ? tops[i + 1] - tops[0] : max;
+      return {
+        start,
+        len: Math.max(0, fin - start),
+        n: Math.max(1, Number(p.dataset.n)),
+        bloque: Number(p.dataset.b),
+        resalte: span,
+      };
     });
     lineasRef.current = lineas;
     lineaActivaRef.current = -1;
@@ -728,7 +758,7 @@ export function Teleprompter() {
     const ro = new ResizeObserver(() => medirLineas());
     ro.observe(el);
     return () => ro.disconnect();
-  }, [fase, enResultado, palabras, tamano, medirLineas]);
+  }, [fase, enResultado, lineasGuion, tamano, medirLineas]);
 
   // Scroll automático del guion.
   useEffect(() => {
@@ -739,11 +769,14 @@ export function Teleprompter() {
       const el = scrollRef.current;
       if (el) {
         const max = el.scrollHeight - el.clientHeight;
-        // max = altura del texto: los px/s salen de las palabras por segundo
-        // del preset y no dependen del tamaño de letra.
-        const { palabrasPorSeg: wps, mult: m, palabras: n } = ritmoRef.current;
-        const pxs = (max * wps * m) / Math.max(1, n);
-        posRef.current += (pxs * (ahora - ultimo)) / 1000;
+        const lineas = lineasRef.current;
+        if (lineas.length > 0) {
+          const { palabrasPorSeg: wps, mult: m } = ritmoRef.current;
+          const l = lineas[indiceLinea(lineas, posRef.current)];
+          // Cada línea dura n/(wps·m) s: sus px se reparten en ese tiempo,
+          // así el ritmo sigue las palabras y no el tamaño de letra.
+          posRef.current += (((l.len * wps * m) / l.n) * (ahora - ultimo)) / 1000;
+        }
         if (posRef.current >= max) {
           posRef.current = max;
           el.scrollTop = max;
