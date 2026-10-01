@@ -43,6 +43,9 @@ const ASPECTO_VERTICAL = 9 / 16;
 const CANVAS_W = 1080;
 const CANVAS_H = 1920;
 const CANVAS_FPS = 30;
+// En un dispositivo vertical, un video vertical se acepta solo con al menos
+// este alto (descarta p. ej. los 480×640 que Safari da con 1080×1920 ideal).
+const ALTO_MIN_VERTICAL = 1280;
 const MENSAJE_FALLO_VERTICAL =
   "No se pudo grabar en vertical; se graba con el formato de la cámara.";
 const TIMEOUT_PERMISO_MS = 10000;
@@ -204,6 +207,8 @@ type Dimension = { w: number; h: number; orientacion: Orientacion };
 type LecturaCamara = Dimension & {
   fps: number | null;
   video: { w: number; h: number } | null;
+  // Lo que entregó cada intento de abrirCamaraVertical (✓ = el elegido).
+  intentos: string[];
 };
 
 // Dimensión "real" de una lectura: la del video si se pudo medir.
@@ -242,13 +247,14 @@ function razonCanvas(
 // Línea de diagnóstico de una lectura: getSettings() y el video medido.
 function describirLectura(l: LecturaCamara | null): string {
   if (!l) return "sin lectura";
-  return `getSettings ${l.w}×${l.h}${l.fps ? ` · ${Math.round(l.fps)} fps` : ""}${l.video ? ` · video ${l.video.w}×${l.video.h}` : ""} · dispositivo ${l.orientacion}`;
+  return `getSettings ${l.w}×${l.h}${l.fps ? ` · ${Math.round(l.fps)} fps` : ""}${l.video ? ` · video ${l.video.w}×${l.video.h}` : ""} · dispositivo ${l.orientacion}${l.intentos.length > 1 ? ` · intentos: ${l.intentos.join(", ")}` : ""}`;
 }
 
 // Lee un stream de cámara ya abierto (getSettings del track + video medido).
 function leerCamara(
   stream: MediaStream,
-  video: { w: number; h: number } | null
+  video: { w: number; h: number } | null,
+  intentos: string[]
 ): LecturaCamara {
   const s = stream.getVideoTracks()[0]?.getSettings();
   return {
@@ -257,6 +263,7 @@ function leerCamara(
     fps: s?.frameRate ?? null,
     orientacion: orientacionActual(),
     video,
+    intentos,
   };
 }
 
@@ -355,11 +362,17 @@ async function abrirCamara(
   };
 }
 
-// Abre la cámara. Tamaño siempre "ideal" (nunca "exact"); sin aspectRatio. En
-// un dispositivo vertical: 1080×1920 → facingMode user → 1920×1080, y solo se
-// reintenta si el VIDEO llega con más ancho que alto (no según getSettings);
-// en horizontal (PC), un único intento 1920×1080. Devuelve el stream y el
-// tamaño medido del video, o null si se canceló a medias.
+// Abre la cámara. Tamaño siempre "ideal" (nunca "exact"); sin aspectRatio.
+// - PC (dispositivo horizontal): un único intento 1920×1080, sin validar.
+// - Dispositivo vertical: prueba 1080×1920 → 720×1280 → 1920×1080 → 1280×720
+//   → facingMode user y acepta el primero cuyo VIDEO (medido en un <video>,
+//   no getSettings) llegue vertical (alto > ancho) con alto ≥ ALTO_MIN_VERTICAL;
+//   si no cumple, suelta la cámara (en móvil no se puede abrir dos veces) y
+//   prueba el siguiente. Si ninguno cumple, reabre el de mayor área entre los
+//   que llegaron verticales; si ninguno llegó vertical, el 1er intento
+//   (directo, con el aviso ámbar).
+// Devuelve el stream, el tamaño medido del video y lo que entregó cada
+// intento (para el chip), o null si se canceló a medias.
 async function abrirCamaraVertical(
   camaraId: string,
   audio: MediaTrackConstraints | false,
@@ -367,32 +380,70 @@ async function abrirCamaraVertical(
 ): Promise<{
   stream: MediaStream;
   video: { w: number; h: number } | null;
+  intentos: string[];
 } | null> {
   const base = { deviceId: camaraId ? { exact: camaraId } : undefined };
-  const intentos: MediaTrackConstraints[] =
-    orientacionActual() === "vertical"
-      ? [
-          { ...base, width: { ideal: 1080 }, height: { ideal: 1920 } },
-          { ...base, facingMode: { ideal: "user" } },
-          { ...base, width: { ideal: 1920 }, height: { ideal: 1080 } },
-        ]
-      : [{ ...base, width: { ideal: 1920 }, height: { ideal: 1080 } }];
-  let elegido = await abrirCamara(intentos[0], audio);
-  // Se suelta la cámara antes de cada reintento (en móvil no se puede abrir
-  // dos veces) y se queda con el primero que llegue vertical.
-  for (let i = 1; i < intentos.length && elegido.ancho > elegido.alto; i++) {
-    elegido.stream.getTracks().forEach((t) => t.stop());
-    if (cancelado()) return null;
-    elegido = await abrirCamara(intentos[i], audio);
+  const vertical = orientacionActual() === "vertical";
+  const intentos: MediaTrackConstraints[] = vertical
+    ? [
+        { ...base, width: { ideal: 1080 }, height: { ideal: 1920 } },
+        { ...base, width: { ideal: 720 }, height: { ideal: 1280 } },
+        { ...base, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        { ...base, width: { ideal: 1280 }, height: { ideal: 720 } },
+        { ...base, facingMode: { ideal: "user" } },
+      ]
+    : [{ ...base, width: { ideal: 1920 }, height: { ideal: 1080 } }];
+  const soltar = (s: MediaStream) => s.getTracks().forEach((t) => t.stop());
+  const etiquetar = (r: { w: number; h: number }[], elegido: number) =>
+    r.map((x, i) => `${x.w ? `${x.w}×${x.h}` : "error"}${i === elegido ? "✓" : ""}`);
+
+  // Lo que entregó cada intento (0×0 = falló al abrir).
+  const resultados: { w: number; h: number }[] = [];
+  let abierto: Awaited<ReturnType<typeof abrirCamara>> | null = null;
+  let indiceAbierto = -1;
+  for (let i = 0; i < intentos.length; i++) {
+    let r: Awaited<ReturnType<typeof abrirCamara>>;
+    try {
+      r = await abrirCamara(intentos[i], audio);
+    } catch (e) {
+      if (i === 0) throw e; // permiso denegado, cámara en uso, etc.
+      resultados.push({ w: 0, h: 0 });
+      continue;
+    }
+    if (cancelado()) {
+      soltar(r.stream);
+      return null;
+    }
+    resultados.push({ w: r.ancho, h: r.alto });
+    // PC: se acepta lo que llegue. Vertical: solo si es vertical y alto ≥ 1280.
+    if (!vertical || (r.alto > r.ancho && r.alto >= ALTO_MIN_VERTICAL)) {
+      abierto = r;
+      indiceAbierto = i;
+      break;
+    }
+    soltar(r.stream);
   }
-  // Ninguno llegó vertical: se vuelve al 1er intento y se graba tal cual
-  // (nunca recortado en un dispositivo vertical).
-  if (elegido.ancho > elegido.alto && intentos.length > 1) {
-    elegido.stream.getTracks().forEach((t) => t.stop());
-    if (cancelado()) return null;
-    elegido = await abrirCamara(intentos[0], audio);
+
+  if (!abierto) {
+    // Ninguno cumplió: el vertical de mayor área, o si ninguno llegó vertical,
+    // el 1er intento (se graba tal cual, sin recortar).
+    let mejor = -1;
+    resultados.forEach((x, i) => {
+      if (x.h > x.w && (mejor < 0 || x.w * x.h > resultados[mejor].w * resultados[mejor].h))
+        mejor = i;
+    });
+    indiceAbierto = mejor >= 0 ? mejor : 0;
+    abierto = await abrirCamara(intentos[indiceAbierto], audio);
+    if (cancelado()) {
+      soltar(abierto.stream);
+      return null;
+    }
   }
-  return { stream: elegido.stream, video: elegido.video };
+  return {
+    stream: abierto.stream,
+    video: abierto.video,
+    intentos: etiquetar(resultados, indiceAbierto),
+  };
 }
 
 function detenerRecorder(recorder: MediaRecorder) {
@@ -965,7 +1016,9 @@ export function Teleprompter() {
         );
         stream = abierta?.stream ?? null;
         if (abierta && !cancelado)
-          setLectura(leerCamara(abierta.stream, abierta.video));
+          setLectura(
+            leerCamara(abierta.stream, abierta.video, abierta.intentos)
+          );
       } catch {
         // Sin lectura: no es crítico (el error real sale al grabar).
       } finally {
@@ -1006,7 +1059,7 @@ export function Teleprompter() {
           stream.getTracks().forEach((t) => t.stop());
           return;
         }
-        setLectura(leerCamara(stream, abierta.video));
+        setLectura(leerCamara(stream, abierta.video, abierta.intentos));
         streamRef.current = stream;
         cadenaRef.current = crearCadenaAudio(
           new MediaStream(stream.getAudioTracks()),
@@ -2123,7 +2176,8 @@ export function Teleprompter() {
               (videoWidth×videoHeight), orientación del dispositivo y canvas. */}
           <p className="pointer-events-none absolute left-2 top-[39%] max-w-[60%] rounded bg-black/60 px-2 py-1 text-[10px] leading-tight text-white/90">
             getSettings {vivo?.track ?? "—"} · video {vivo?.video ?? "—"} ·
-            dispositivo {vivo?.orientacion ?? "—"} · canvas: {razon.texto}
+            dispositivo {vivo?.orientacion ?? "—"} · canvas: {razon.texto} ·
+            intentos: {lectura?.intentos.join(", ") || "—"}
           </p>
 
           {conteo !== null && (
