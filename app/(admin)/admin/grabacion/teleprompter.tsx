@@ -27,6 +27,9 @@ const RESALTE = ["bg-[#54A6D8]/40"]; // clases de la línea que se está leyendo
 const GANANCIA_MIN = 1;
 const GANANCIA_MAX = 6;
 const MAX_TOMAS = 5;
+// Vista previa de "preparar": mismo 9:16 que el lienzo, en chico.
+const PREVIEW_W = 270;
+const PREVIEW_H = 480;
 const LIMITE_DURACION_S = 18;
 // Umbral de "ya hay voz" para medir el tiempo muerto inicial (dBFS, después
 // de ganancia y limitador).
@@ -207,35 +210,91 @@ function dibujarEncuadre(
   const vw = video.videoWidth;
   const vh = video.videoHeight;
   if (!vw || !vh || video.readyState < 2) return;
-  const base =
-    encuadre === "llenar"
-      ? Math.max(CANVAS_W / vw, CANVAS_H / vh)
-      : Math.min(CANVAS_W / vw, CANVAS_H / vh);
-  const dw = vw * base * zoom;
-  const dh = vh * base * zoom;
+  // Mismo cálculo para el lienzo de grabación (1080×1920) y para la vista
+  // previa de "preparar" (misma proporción 9:16, más chica).
+  const W = ctx.canvas.width;
+  const H = ctx.canvas.height;
+  const escala = escalaEncuadre(vw, vh, encuadre, W, H) * zoom;
+  const dw = vw * escala;
+  const dh = vh * escala;
   ctx.fillStyle = "#000";
-  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-  ctx.drawImage(
-    video,
-    0,
-    0,
-    vw,
-    vh,
-    (CANVAS_W - dw) / 2,
-    (CANVAS_H - dh) / 2,
-    dw,
-    dh
-  );
+  ctx.fillRect(0, 0, W, H);
+  ctx.drawImage(video, 0, 0, vw, vh, (W - dw) / 2, (H - dh) / 2, dw, dh);
+}
+
+// Escala base del video sobre el lienzo, sin zoom. "llenar" (cover):
+// max(W/vw, H/vh), la misma en ambos ejes (no deforma); "ajustar" (contain):
+// min(W/vw, H/vh).
+function escalaEncuadre(
+  vw: number,
+  vh: number,
+  encuadre: Encuadre,
+  w = CANVAS_W,
+  h = CANVAS_H
+): number {
+  return encuadre === "llenar"
+    ? Math.max(w / vw, h / vh)
+    : Math.min(w / vw, h / vh);
+}
+
+// Texto de diagnóstico: resolución cruda de la cámara, factor de escala
+// resultante y qué parte del ancho del video queda dentro del lienzo.
+function describirEncuadre(
+  dim: { w: number; h: number } | null,
+  encuadre: Encuadre,
+  zoom: number
+): string {
+  if (!dim) return "Cámara: se mide al abrirla";
+  if (dim.h > dim.w)
+    return `Cámara ${dim.w}×${dim.h} · vertical nativo: se graba directo, sin recorte, escala ni zoom`;
+  const escala = escalaEncuadre(dim.w, dim.h, encuadre) * zoom;
+  const ancho = Math.min(100, (CANVAS_W / (dim.w * escala)) * 100);
+  return `Cámara ${dim.w}×${dim.h} · escala ×${escala.toFixed(2)} · se ve el ${Math.round(ancho)} % del ancho`;
 }
 
 // Pide la cámara y devuelve el stream con el tamaño que dice entregar.
 async function abrirCamara(
   video: MediaTrackConstraints,
-  audio: MediaTrackConstraints
+  audio: MediaTrackConstraints | false
 ) {
   const stream = await navigator.mediaDevices.getUserMedia({ video, audio });
   const s = stream.getVideoTracks()[0]?.getSettings();
   return { stream, ancho: s?.width ?? 0, alto: s?.height ?? 0 };
+}
+
+// Abre la cámara intentando vertical nativo. Tamaño siempre "ideal" (nunca
+// "exact"); sin aspectRatio. El 1er intento va según la orientación; los
+// demás solo se prueban si el dispositivo está en vertical y la cámara
+// entrega más ancho que alto. Devuelve null si se canceló a medias.
+async function abrirCamaraVertical(
+  camaraId: string,
+  audio: MediaTrackConstraints | false,
+  cancelado: () => boolean
+): Promise<MediaStream | null> {
+  const base = { deviceId: camaraId ? { exact: camaraId } : undefined };
+  const intentos: MediaTrackConstraints[] =
+    orientacionActual() === "vertical"
+      ? [
+          { ...base, width: { ideal: 1080 }, height: { ideal: 1920 } },
+          { ...base, facingMode: { ideal: "user" } },
+          { ...base, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        ]
+      : [{ ...base, width: { ideal: 1920 }, height: { ideal: 1080 } }];
+  let elegido = await abrirCamara(intentos[0], audio);
+  // Se suelta la cámara antes de cada reintento (en móvil no se puede abrir
+  // dos veces) y se queda con el primero que llegue vertical.
+  for (let i = 1; i < intentos.length && elegido.ancho > elegido.alto; i++) {
+    elegido.stream.getTracks().forEach((t) => t.stop());
+    if (cancelado()) return null;
+    elegido = await abrirCamara(intentos[i], audio);
+  }
+  // Ninguno llegó vertical: se vuelve al 1er intento (lo resuelve el canvas).
+  if (elegido.ancho > elegido.alto && intentos.length > 1) {
+    elegido.stream.getTracks().forEach((t) => t.stop());
+    if (cancelado()) return null;
+    elegido = await abrirCamara(intentos[0], audio);
+  }
+  return elegido.stream;
 }
 
 // Texto blanco al 65 % con sombra suave, centrado en el tercio superior
@@ -425,10 +484,16 @@ export function Teleprompter() {
   const [zoom, setZoom] = useState(1);
   // Resolución cruda que entrega la cámara (videoWidth×videoHeight), última lectura.
   const [camaraRes, setCamaraRes] = useState("");
-  // El canvas 9:16 (preview y fuente de la grabación) está activo siempre,
-  // salvo que haya fallado (entonces se graba la cámara directa).
+  const [camaraDim, setCamaraDim] = useState<{ w: number; h: number } | null>(
+    null
+  );
+  // El canvas 9:16 (preview y fuente de la grabación) es solo el fallback
+  // para una cámara que entrega horizontal. Si el stream ya llega vertical
+  // (alto > ancho) se graba el stream directo: sin recorte, escala ni zoom.
+  // Mientras no se conoce el tamaño del video no hay canvas.
   const [canvasFallo, setCanvasFallo] = useState(false);
-  const canvasActivo = !canvasFallo;
+  const camaraHorizontal = camaraDim !== null && camaraDim.h <= camaraDim.w;
+  const canvasActivo = !canvasFallo && camaraHorizontal;
   const [avisoVertical, setAvisoVertical] = useState<string | null>(null);
   // Resolución real de cada toma (id → "ancho×alto"), leída del video.
   const [resoluciones, setResoluciones] = useState<Record<number, string>>({});
@@ -447,10 +512,16 @@ export function Teleprompter() {
   const activoRef = useRef(0);
   const medidorRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  // Vista previa del encuadre en la fase "preparar".
+  const prevVideoRef = useRef<HTMLVideoElement>(null);
+  const prevCanvasRef = useRef<HTMLCanvasElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const canvasStreamRef = useRef<MediaStream | null>(null);
   // Si el canvas falló, no se vuelve a activar en esta adquisición.
   const canvasFalloRef = useRef(false);
+  // Espejo de canvasActivo para los callbacks (el canvas se espera, aunque
+  // su stream aún no exista).
+  const canvasEsperadoRef = useRef(false);
   // Lo lee el bucle del canvas: los cambios se ven en vivo sin reiniciarlo.
   const ajusteRef = useRef<{ encuadre: Encuadre; zoom: number }>({
     encuadre: "llenar",
@@ -535,6 +606,10 @@ export function Teleprompter() {
     ajusteRef.current = { encuadre, zoom };
   }, [encuadre, zoom]);
 
+  useEffect(() => {
+    canvasEsperadoRef.current = canvasActivo;
+  }, [canvasActivo]);
+
   // Última lectura de la cámara en el ámbito de los ajustes y de las tomas.
   const camaraTexto = camaraRes || "se mide al abrir la cámara";
 
@@ -583,7 +658,6 @@ export function Teleprompter() {
           cortarAlFinal?: boolean;
           forzarVertical?: boolean;
           encuadreCanvas?: string;
-          zoom?: number;
           preset?: string;
         };
         // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -605,8 +679,7 @@ export function Teleprompter() {
         // valor por defecto con la clave anterior (encuadre) se ignora.
         if (d.encuadreCanvas === "ajustar" || d.encuadreCanvas === "llenar")
           setEncuadre(d.encuadreCanvas);
-        if (typeof d.zoom === "number")
-          setZoom(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, d.zoom)));
+        // El zoom no se restaura: siempre parte en 1 (lo guardado antes se ignora).
         if (d.preset && d.preset in PRESETS) setPreset(d.preset as PresetId);
         if (typeof d.ganancia === "number")
           setGanancia(
@@ -634,7 +707,6 @@ export function Teleprompter() {
           cortarAlFinal,
           forzarVertical,
           encuadreCanvas: encuadre,
-          zoom,
           preset,
         })
       );
@@ -651,7 +723,6 @@ export function Teleprompter() {
     cortarAlFinal,
     forzarVertical,
     encuadre,
-    zoom,
     preset,
   ]);
 
@@ -811,6 +882,61 @@ export function Teleprompter() {
     };
   }, [fase, hayMicrofonos, microfonoId, procesarAudio]);
 
+  // Vista previa del encuadre en "preparar": la misma cámara y el mismo
+  // dibujo (encuadre + zoom) que usará el lienzo de grabación, en chico, para
+  // ver el recorte antes de grabar. Solo con permiso ya concedido; se suelta
+  // la cámara al salir de la fase (antes de que "grabar" la abra).
+  const hayCamaras = camaras.length > 0;
+  useEffect(() => {
+    if (fase !== "preparar" || !hayCamaras) return;
+    if (!navigator.mediaDevices?.getUserMedia) return;
+    const video = prevVideoRef.current;
+    const canvas = prevCanvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (!video || !canvas || !ctx) return;
+    let cancelado = false;
+    let stream: MediaStream | null = null;
+    let raf = 0;
+
+    (async () => {
+      try {
+        stream = await abrirCamaraVertical(camaraId, false, () => cancelado);
+        if (!stream) return;
+        if (cancelado) {
+          stream.getTracks().forEach((t) => t.stop());
+          stream = null;
+          return;
+        }
+        video.srcObject = stream;
+        let ultimo = 0;
+        const dibujar = (t: number) => {
+          raf = requestAnimationFrame(dibujar);
+          if (t - ultimo < 1000 / CANVAS_FPS - 2) return;
+          ultimo = t;
+          // Mismo criterio que al grabar: cámara vertical = video directo,
+          // completo y sin zoom ("ajustar", 1); horizontal = encuadre + zoom.
+          const vertical = video.videoHeight > video.videoWidth;
+          dibujarEncuadre(
+            ctx,
+            video,
+            vertical ? "ajustar" : ajusteRef.current.encuadre,
+            vertical ? 1 : ajusteRef.current.zoom
+          );
+        };
+        raf = requestAnimationFrame(dibujar);
+      } catch {
+        // Sin vista previa: no es crítico (el error real sale al grabar).
+      }
+    })();
+
+    return () => {
+      cancelado = true;
+      cancelAnimationFrame(raf);
+      stream?.getTracks().forEach((t) => t.stop());
+      video.srcObject = null;
+    };
+  }, [fase, hayCamaras, camaraId]);
+
   // Adquiere el stream al entrar a la fase de grabación (o al reintentar).
   useEffect(() => {
     if (fase !== "grabar") return;
@@ -824,38 +950,12 @@ export function Teleprompter() {
         return;
       }
       try {
-        // Tamaño siempre "ideal" (nunca "exact"); sin aspectRatio. El 1er
-        // intento va según la orientación; los demás solo se prueban si el
-        // dispositivo está en vertical y la cámara entrega más ancho que alto.
-        const base = { deviceId: camaraId ? { exact: camaraId } : undefined };
-        const intentos: MediaTrackConstraints[] =
-          orientacionActual() === "vertical"
-            ? [
-                { ...base, width: { ideal: 1080 }, height: { ideal: 1920 } },
-                { ...base, facingMode: { ideal: "user" } },
-                { ...base, width: { ideal: 1920 }, height: { ideal: 1080 } },
-              ]
-            : [{ ...base, width: { ideal: 1920 }, height: { ideal: 1080 } }];
-        const audio = restriccionesAudio(microfonoId, procesarAudio);
-        let elegido = await abrirCamara(intentos[0], audio);
-        // Se suelta la cámara antes de cada reintento (en móvil no se puede
-        // abrir dos veces) y se queda con el primero que llegue vertical.
-        for (
-          let i = 1;
-          i < intentos.length && elegido.ancho > elegido.alto;
-          i++
-        ) {
-          elegido.stream.getTracks().forEach((t) => t.stop());
-          if (cancelado) return;
-          elegido = await abrirCamara(intentos[i], audio);
-        }
-        // Ninguno llegó vertical: se vuelve al 1er intento (lo resuelve el canvas).
-        if (elegido.ancho > elegido.alto && intentos.length > 1) {
-          elegido.stream.getTracks().forEach((t) => t.stop());
-          if (cancelado) return;
-          elegido = await abrirCamara(intentos[0], audio);
-        }
-        const stream = elegido.stream;
+        const stream = await abrirCamaraVertical(
+          camaraId,
+          restriccionesAudio(microfonoId, procesarAudio),
+          () => cancelado
+        );
+        if (!stream) return;
         if (cancelado) {
           stream.getTracks().forEach((t) => t.stop());
           return;
@@ -876,7 +976,8 @@ export function Teleprompter() {
       cancelado = true;
       detenerStream();
       setListo(false);
-      // Cada adquisición vuelve a intentar el canvas.
+      // Cada adquisición vuelve a medir el video y a intentar el canvas.
+      setCamaraDim(null);
       setCanvasFallo(false);
       setAvisoVertical(null);
       canvasFalloRef.current = false;
@@ -1056,9 +1157,10 @@ export function Teleprompter() {
     const cadena = cadenaRef.current;
     const directo = streamRef.current;
     if (!directo || !cadena) return;
-    // Con el canvas vigente (no fallado) siempre se graba de su captureStream;
-    // si aún no existe no se cae en silencio al stream directo.
-    if (!canvasFalloRef.current && !canvasStreamRef.current) return;
+    // Con el canvas vigente (cámara horizontal, sin fallo) siempre se graba de
+    // su captureStream; si aún no existe no se cae en silencio al directo.
+    // Con la cámara vertical no hay canvas y se graba el stream directo.
+    if (canvasEsperadoRef.current && !canvasStreamRef.current) return;
     // Con canvas activo se intenta primero grabar de él; si el recorder falla
     // (constructor o start), se cae al stream directo.
     const fuentes: Origen[] = canvasStreamRef.current
@@ -1572,6 +1674,10 @@ export function Teleprompter() {
             Si la cámara no entrega 9:16, graba un recorte centrado de 1080×1920
             (lo que ves es lo que se graba). Consume más CPU.
           </p>
+          {/* Encuadre y zoom solo existen si hace falta el canvas (cámara
+              horizontal); con cámara vertical se graba directo y se ocultan. */}
+          {canvasActivo && (
+          <>
           <div className="flex flex-col gap-1 text-sm text-gray-600">
             Encuadre del canvas
             <div className="grid grid-cols-2 gap-1" role="group">
@@ -1614,6 +1720,8 @@ export function Teleprompter() {
             {encuadre === "ajustar" ? "Ajustar" : "Llenar"} · Zoom:{" "}
             {zoom.toFixed(1)}x
           </p>
+          </>
+          )}
           <label className="flex items-center gap-2 text-sm text-gray-700">
             <input
               type="checkbox"
@@ -1684,6 +1792,37 @@ export function Teleprompter() {
                 </label>
               </>
             )}
+            {hayCamaras && (
+              <div className="flex flex-col gap-1">
+                <span className="text-sm text-gray-600">
+                  Vista previa del encuadre (9:16)
+                </span>
+                <div
+                  className="relative mx-auto w-36 overflow-hidden rounded-xl bg-black"
+                  style={{ aspectRatio: "9 / 16" }}
+                >
+                  <video
+                    ref={prevVideoRef}
+                    autoPlay
+                    muted
+                    playsInline
+                    className="pointer-events-none absolute left-0 top-0 h-px w-px opacity-0"
+                    onLoadedMetadata={actualizarAspecto}
+                    onResize={actualizarAspecto}
+                  />
+                  <canvas
+                    ref={prevCanvasRef}
+                    width={PREVIEW_W}
+                    height={PREVIEW_H}
+                    className="h-full w-full"
+                    style={{ transform: "scaleX(-1)" }}
+                  />
+                </div>
+                <span className="text-center text-[11px] text-gray-400">
+                  {describirEncuadre(camaraDim, encuadre, zoom)}
+                </span>
+              </div>
+            )}
             {hayMicrofonos && (
               <div className="flex flex-col gap-1">
                 <span className="text-sm text-gray-600">Nivel del micrófono</span>
@@ -1718,11 +1857,14 @@ export function Teleprompter() {
     "flex h-10 items-center justify-center gap-1.5 rounded-xl bg-white/15 px-3 text-sm font-medium text-white transition hover:bg-white/25";
 
   // Tamaño real (crudo) del video de la cámara; cambia, p. ej., al girar el
-  // teléfono. Solo informativo: el canvas está activo siempre que no falle.
+  // teléfono. De él depende si hace falta el canvas (cámara horizontal). No se
+  // actualiza mientras se graba, para no cambiar de fuente a mitad de toma.
   function actualizarAspecto(e: React.SyntheticEvent<HTMLVideoElement>) {
     const { videoWidth, videoHeight } = e.currentTarget;
     if (!(videoWidth > 0 && videoHeight > 0)) return;
+    if (sesionRef.current) return;
     setCamaraRes(`${videoWidth}×${videoHeight}`);
+    setCamaraDim({ w: videoWidth, h: videoHeight });
   }
 
   // El marco de la fase "grabar" es siempre 9:16, sin depender del canvas ni
@@ -1974,7 +2116,9 @@ export function Teleprompter() {
             <button
               type="button"
               onClick={alternarGrabacion}
-              disabled={!listo || (!grabando && tomasLlenas)}
+              disabled={
+                !listo || camaraDim === null || (!grabando && tomasLlenas)
+              }
               className={`flex h-11 items-center gap-2 rounded-xl px-5 text-sm font-semibold text-white transition disabled:opacity-50 ${
                 grabando ? "bg-red-600 hover:bg-red-700" : "bg-[#54A6D8] hover:bg-[#4394c4]"
               }`}
