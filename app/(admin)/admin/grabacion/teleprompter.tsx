@@ -198,8 +198,19 @@ function orientacionActual(): Orientacion {
 // Tamaño del video con la orientación del dispositivo en el momento de medirlo
 // (se congela: girar el teléfono a mitad de una toma no cambia de fuente).
 type Dimension = { w: number; h: number; orientacion: Orientacion };
-// Lo que dice el track (getSettings), para diagnosticar.
-type LecturaCamara = Dimension & { fps: number | null };
+// Lo que dice el track (getSettings) y lo que mide un <video> con ese stream.
+// En Safari ambos pueden ir desfasados (p. ej. track 1080×1920 y video
+// 1920×1080); las decisiones se toman con el video, getSettings solo informa.
+type LecturaCamara = Dimension & {
+  fps: number | null;
+  video: { w: number; h: number } | null;
+};
+
+// Dimensión "real" de una lectura: la del video si se pudo medir.
+function dimensionReal(l: LecturaCamara | null): Dimension | null {
+  if (!l) return null;
+  return { w: l.video?.w ?? l.w, h: l.video?.h ?? l.h, orientacion: l.orientacion };
+}
 
 // Decide si se usa el canvas 9:16 y explica por qué (para mostrarlo en
 // pantalla). Solo en un dispositivo horizontal (PC) y con una cámara que no
@@ -217,21 +228,72 @@ function razonCanvas(
   return { activo: true, texto: "ACTIVO (recorte central 9:16)" };
 }
 
-// Línea de diagnóstico de lo que entrega la cámara según getSettings().
+// Línea de diagnóstico de una lectura: getSettings() y el video medido.
 function describirLectura(l: LecturaCamara | null): string {
-  if (!l) return "getSettings: sin lectura";
-  return `getSettings ${l.w}×${l.h}${l.fps ? ` · ${Math.round(l.fps)} fps` : ""} · dispositivo ${l.orientacion}`;
+  if (!l) return "sin lectura";
+  return `getSettings ${l.w}×${l.h}${l.fps ? ` · ${Math.round(l.fps)} fps` : ""}${l.video ? ` · video ${l.video.w}×${l.video.h}` : ""} · dispositivo ${l.orientacion}`;
 }
 
-// Mide lo que entrega un stream de cámara ya abierto.
-function leerCamara(stream: MediaStream): LecturaCamara {
+// Lee un stream de cámara ya abierto (getSettings del track + video medido).
+function leerCamara(
+  stream: MediaStream,
+  video: { w: number; h: number } | null
+): LecturaCamara {
   const s = stream.getVideoTracks()[0]?.getSettings();
   return {
     w: s?.width ?? 0,
     h: s?.height ?? 0,
     fps: s?.frameRate ?? null,
     orientacion: orientacionActual(),
+    video,
   };
+}
+
+// Lectura "en vivo" para el chip de diagnóstico (track + video + dispositivo).
+type LecturaVivo = { track: string; video: string; orientacion: Orientacion };
+
+// Avisa cuando cambia la orientación del dispositivo (matchMedia y el evento
+// orientationchange, que en iOS llega por separado). Devuelve cómo dejar de
+// escuchar.
+function suscribirOrientacion(cb: () => void): () => void {
+  const mq = window.matchMedia("(orientation: portrait)");
+  if (mq.addEventListener) mq.addEventListener("change", cb);
+  else mq.addListener(cb);
+  window.addEventListener("orientationchange", cb);
+  return () => {
+    if (mq.removeEventListener) mq.removeEventListener("change", cb);
+    else mq.removeListener(cb);
+    window.removeEventListener("orientationchange", cb);
+  };
+}
+
+// Tamaño real que muestra un <video> con este stream (no getSettings, que en
+// Safari puede estar desfasado). Usa un <video> auxiliar invisible y espera
+// hasta ~1,5 s a que tenga dimensiones; null si no las obtiene.
+async function medirVideo(
+  stream: MediaStream
+): Promise<{ w: number; h: number } | null> {
+  const video = document.createElement("video");
+  video.muted = true;
+  video.playsInline = true;
+  video.setAttribute("playsinline", "");
+  video.style.cssText =
+    "position:absolute;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none";
+  document.body.appendChild(video);
+  try {
+    video.srcObject = stream;
+    await video.play().catch(() => {});
+    const inicio = performance.now();
+    while (performance.now() - inicio < 1500) {
+      if (video.videoWidth > 0 && video.videoHeight > 0)
+        return { w: video.videoWidth, h: video.videoHeight };
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return null;
+  } finally {
+    video.srcObject = null;
+    video.remove();
+  }
 }
 
 // Dibuja en el lienzo 9:16 la región central del video (cover, sin zoom: la
@@ -265,25 +327,36 @@ function dibujarRecorte(
   ctx.drawImage(video, sx, sy, sw, sh, 0, 0, CANVAS_W, CANVAS_H);
 }
 
-// Pide la cámara y devuelve el stream con el tamaño que dice entregar.
+// Pide la cámara y devuelve el stream con el tamaño real del video (medido en
+// un <video>); si no se puede medir, cae a getSettings().
 async function abrirCamara(
   video: MediaTrackConstraints,
   audio: MediaTrackConstraints | false
 ) {
   const stream = await navigator.mediaDevices.getUserMedia({ video, audio });
+  const medido = await medirVideo(stream);
   const s = stream.getVideoTracks()[0]?.getSettings();
-  return { stream, ancho: s?.width ?? 0, alto: s?.height ?? 0 };
+  return {
+    stream,
+    video: medido,
+    ancho: medido?.w ?? s?.width ?? 0,
+    alto: medido?.h ?? s?.height ?? 0,
+  };
 }
 
 // Abre la cámara. Tamaño siempre "ideal" (nunca "exact"); sin aspectRatio. En
 // un dispositivo vertical: 1080×1920 → facingMode user → 1920×1080, y solo se
-// reintenta si el track llega con más ancho que alto; en horizontal (PC), un
-// único intento 1920×1080. Devuelve null si se canceló a medias.
+// reintenta si el VIDEO llega con más ancho que alto (no según getSettings);
+// en horizontal (PC), un único intento 1920×1080. Devuelve el stream y el
+// tamaño medido del video, o null si se canceló a medias.
 async function abrirCamaraVertical(
   camaraId: string,
   audio: MediaTrackConstraints | false,
   cancelado: () => boolean
-): Promise<MediaStream | null> {
+): Promise<{
+  stream: MediaStream;
+  video: { w: number; h: number } | null;
+} | null> {
   const base = { deviceId: camaraId ? { exact: camaraId } : undefined };
   const intentos: MediaTrackConstraints[] =
     orientacionActual() === "vertical"
@@ -308,7 +381,7 @@ async function abrirCamaraVertical(
     if (cancelado()) return null;
     elegido = await abrirCamara(intentos[0], audio);
   }
-  return elegido.stream;
+  return { stream: elegido.stream, video: elegido.video };
 }
 
 function detenerRecorder(recorder: MediaRecorder) {
@@ -472,13 +545,14 @@ export function Teleprompter() {
   const [segundos, setSegundos] = useState(0);
   const [intento, setIntento] = useState(0);
   const [aspecto, setAspecto] = useState(ASPECTO_DEFECTO);
-  // Resolución cruda que entrega la cámara (videoWidth×videoHeight), última lectura.
-  const [camaraRes, setCamaraRes] = useState("");
   // Tamaño del video de la cámara en esta adquisición (null = aún no se mide),
   // con la orientación del dispositivo al medirlo.
   const [camaraDim, setCamaraDim] = useState<Dimension | null>(null);
-  // Última lectura de getSettings() del track (también la de "preparar").
+  // Última lectura al abrir la cámara (getSettings + video medido; también la
+  // de "preparar").
   const [lectura, setLectura] = useState<LecturaCamara | null>(null);
+  // Lectura en vivo (cada 500 ms y en resize/orientationchange) para el chip.
+  const [vivo, setVivo] = useState<LecturaVivo | null>(null);
   const [medirTick, setMedirTick] = useState(0);
   // Desplazamiento horizontal del recorte del canvas (−1…1, 0 = centro).
   const [desplazamiento, setDesplazamiento] = useState(0);
@@ -517,6 +591,8 @@ export function Teleprompter() {
   const rafCanvasRef = useRef(0);
   // Si el canvas falló, no se vuelve a activar en esta adquisición.
   const canvasFalloRef = useRef(false);
+  // Orientación del dispositivo con la que se abrió la cámara por última vez.
+  const orientacionAbiertaRef = useRef<Orientacion>("horizontal");
   // Espejo de canvasActivo para los callbacks (el canvas se espera aunque su
   // stream aún no exista).
   const canvasEsperadoRef = useRef(false);
@@ -869,9 +945,16 @@ export function Teleprompter() {
 
     (async () => {
       setMidiendo(true);
+      orientacionAbiertaRef.current = orientacionActual();
       try {
-        stream = await abrirCamaraVertical(camaraId, false, () => cancelado);
-        if (stream && !cancelado) setLectura(leerCamara(stream));
+        const abierta = await abrirCamaraVertical(
+          camaraId,
+          false,
+          () => cancelado
+        );
+        stream = abierta?.stream ?? null;
+        if (abierta && !cancelado)
+          setLectura(leerCamara(abierta.stream, abierta.video));
       } catch {
         // Sin lectura: no es crítico (el error real sale al grabar).
       } finally {
@@ -900,17 +983,19 @@ export function Teleprompter() {
         return;
       }
       try {
-        const stream = await abrirCamaraVertical(
+        orientacionAbiertaRef.current = orientacionActual();
+        const abierta = await abrirCamaraVertical(
           camaraId,
           restriccionesAudio(microfonoId, procesarAudio),
           () => cancelado
         );
-        if (!stream) return;
+        if (!abierta) return;
+        const stream = abierta.stream;
         if (cancelado) {
           stream.getTracks().forEach((t) => t.stop());
           return;
         }
-        setLectura(leerCamara(stream));
+        setLectura(leerCamara(stream, abierta.video));
         streamRef.current = stream;
         cadenaRef.current = crearCadenaAudio(
           new MediaStream(stream.getAudioTracks()),
@@ -936,6 +1021,60 @@ export function Teleprompter() {
     // camaraId/microfonoId se fijan al iniciar; no deben re-adquirir el stream.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fase, intento, detenerStream]);
+
+  // Lectura en vivo para el chip de diagnóstico: getSettings() del track y
+  // videoWidth/videoHeight actuales cada 500 ms y en cada resize del video u
+  // orientationchange, junto a la orientación actual del dispositivo. Solo
+  // lee: no altera la fuente ni la toma.
+  useEffect(() => {
+    if (fase !== "grabar" || !listo || enResultado) return;
+    const leer = () => {
+      const t = streamRef.current?.getVideoTracks()[0]?.getSettings();
+      const v = videoRef.current;
+      const nuevo: LecturaVivo = {
+        track:
+          t?.width && t.height
+            ? `${t.width}×${t.height}${t.frameRate ? ` · ${Math.round(t.frameRate)} fps` : ""}`
+            : "—",
+        video: v && v.videoWidth > 0 ? `${v.videoWidth}×${v.videoHeight}` : "—",
+        orientacion: orientacionActual(),
+      };
+      setVivo((prev) =>
+        prev &&
+        prev.track === nuevo.track &&
+        prev.video === nuevo.video &&
+        prev.orientacion === nuevo.orientacion
+          ? prev
+          : nuevo
+      );
+    };
+    const inicial = setTimeout(leer, 0);
+    const id = setInterval(leer, 500);
+    const video = videoRef.current;
+    video?.addEventListener("resize", leer);
+    const dejarDeEscuchar = suscribirOrientacion(leer);
+    return () => {
+      clearTimeout(inicial);
+      clearInterval(id);
+      video?.removeEventListener("resize", leer);
+      dejarDeEscuchar();
+    };
+  }, [fase, listo, enResultado]);
+
+  // Si el dispositivo cambia de orientación FUERA de una toma (en "preparar",
+  // o en "grabar" sin grabar ni cuenta regresiva), reabre la cámara con
+  // abrirCamaraVertical y vuelve a medir. Durante una toma (o su cuenta
+  // regresiva) no se toca nada: ni cámara, ni fuente, ni decisión.
+  useEffect(() => {
+    if (enResultado) return;
+    const alCambiar = () => {
+      if (sesionRef.current || conteo !== null) return;
+      if (orientacionActual() === orientacionAbiertaRef.current) return;
+      if (fase === "grabar") setIntento((n) => n + 1);
+      else setMedirTick((n) => n + 1);
+    };
+    return suscribirOrientacion(alCambiar);
+  }, [fase, enResultado, conteo]);
 
   // Canvas 9:16: dibuja el recorte central del video y expone su captureStream
   // para grabar. El preview es este mismo canvas, así que lo que se ve es lo
@@ -1609,7 +1748,7 @@ export function Teleprompter() {
           <div className="flex flex-col gap-1">
             <p className="text-[11px] text-gray-500">
               {describirLectura(lectura)} · canvas:{" "}
-              {razonCanvas(lectura, false).texto}
+              {razonCanvas(dimensionReal(lectura), false).texto}
               {midiendo ? " · midiendo…" : ""}
             </p>
             {hayCamaras && (
@@ -1735,7 +1874,6 @@ export function Teleprompter() {
     if (!(videoWidth > 0 && videoHeight > 0)) return;
     if (sesionRef.current) return;
     setAspecto(videoWidth / videoHeight);
-    setCamaraRes(`${videoWidth}×${videoHeight}`);
     setCamaraDim({
       w: videoWidth,
       h: videoHeight,
@@ -1963,15 +2101,18 @@ export function Teleprompter() {
 
           {horizontalEnVertical && camaraDim && (
             <p className="absolute inset-x-2 bottom-[34%] rounded-lg bg-amber-500/90 px-3 py-1.5 text-center text-xs font-medium text-black">
-              La cámara entregó {camaraDim.w}×{camaraDim.h} (horizontal) con el
-              teléfono en vertical; se graba tal cual, sin recortar.
+              Con el teléfono en vertical la cámara entregó video{" "}
+              {camaraDim.w}×{camaraDim.h} (horizontal); getSettings dice{" "}
+              {vivo?.track ?? (lectura ? `${lectura.w}×${lectura.h}` : "—")}.
+              Se graba tal cual, sin canvas ni recorte.
             </p>
           )}
 
-          {/* Diagnóstico siempre visible: lo que dice el track y si hay canvas. */}
+          {/* Diagnóstico siempre visible y en vivo: track (getSettings), video
+              (videoWidth×videoHeight), orientación del dispositivo y canvas. */}
           <p className="pointer-events-none absolute left-2 top-[39%] max-w-[60%] rounded bg-black/60 px-2 py-1 text-[10px] leading-tight text-white/90">
-            {describirLectura(lectura)}
-            {camaraRes ? ` · video ${camaraRes}` : ""} · canvas: {razon.texto}
+            getSettings {vivo?.track ?? "—"} · video {vivo?.video ?? "—"} ·
+            dispositivo {vivo?.orientacion ?? "—"} · canvas: {razon.texto}
           </p>
 
           {conteo !== null && (
