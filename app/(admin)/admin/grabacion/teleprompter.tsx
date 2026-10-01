@@ -182,10 +182,56 @@ function streamParaGrabar(
   ]);
 }
 
+// Pantalla táctil como entrada principal (teléfono / tablet).
+function esDispositivoTactil(): boolean {
+  return window.matchMedia("(hover: none) and (pointer: coarse)").matches;
+}
+
+// "vertical" solo para un dispositivo táctil con la pantalla en vertical. Una
+// PC cuenta siempre como "horizontal" (aunque la ventana sea angosta): su
+// webcam es horizontal y ahí es donde el canvas 9:16 hace falta.
 function orientacionActual(): Orientacion {
-  return window.matchMedia("(orientation: portrait)").matches
-    ? "vertical"
-    : "horizontal";
+  const vertical = window.matchMedia("(orientation: portrait)").matches;
+  return vertical && esDispositivoTactil() ? "vertical" : "horizontal";
+}
+
+// Tamaño del video con la orientación del dispositivo en el momento de medirlo
+// (se congela: girar el teléfono a mitad de una toma no cambia de fuente).
+type Dimension = { w: number; h: number; orientacion: Orientacion };
+// Lo que dice el track (getSettings), para diagnosticar.
+type LecturaCamara = Dimension & { fps: number | null };
+
+// Decide si se usa el canvas 9:16 y explica por qué (para mostrarlo en
+// pantalla). Solo en un dispositivo horizontal (PC) y con una cámara que no
+// entrega ≈9:16; en un teléfono en vertical nunca hay canvas.
+function razonCanvas(
+  dim: Dimension | null,
+  fallo: boolean
+): { activo: boolean; texto: string } {
+  if (!dim) return { activo: false, texto: "sin medir" };
+  if (fallo) return { activo: false, texto: "no (falló; se graba directo)" };
+  if (dim.orientacion === "vertical")
+    return { activo: false, texto: "no (dispositivo vertical; se graba directo)" };
+  if (Math.abs(dim.w / dim.h - ASPECTO_VERTICAL) <= 0.02)
+    return { activo: false, texto: "no (la cámara ya es ≈9:16; directo)" };
+  return { activo: true, texto: "ACTIVO (recorte central 9:16)" };
+}
+
+// Línea de diagnóstico de lo que entrega la cámara según getSettings().
+function describirLectura(l: LecturaCamara | null): string {
+  if (!l) return "getSettings: sin lectura";
+  return `getSettings ${l.w}×${l.h}${l.fps ? ` · ${Math.round(l.fps)} fps` : ""} · dispositivo ${l.orientacion}`;
+}
+
+// Mide lo que entrega un stream de cámara ya abierto.
+function leerCamara(stream: MediaStream): LecturaCamara {
+  const s = stream.getVideoTracks()[0]?.getSettings();
+  return {
+    w: s?.width ?? 0,
+    h: s?.height ?? 0,
+    fps: s?.frameRate ?? null,
+    orientacion: orientacionActual(),
+  };
 }
 
 // Dibuja en el lienzo 9:16 la región central del video (cover, sin zoom: la
@@ -222,11 +268,47 @@ function dibujarRecorte(
 // Pide la cámara y devuelve el stream con el tamaño que dice entregar.
 async function abrirCamara(
   video: MediaTrackConstraints,
-  audio: MediaTrackConstraints
+  audio: MediaTrackConstraints | false
 ) {
   const stream = await navigator.mediaDevices.getUserMedia({ video, audio });
   const s = stream.getVideoTracks()[0]?.getSettings();
   return { stream, ancho: s?.width ?? 0, alto: s?.height ?? 0 };
+}
+
+// Abre la cámara. Tamaño siempre "ideal" (nunca "exact"); sin aspectRatio. En
+// un dispositivo vertical: 1080×1920 → facingMode user → 1920×1080, y solo se
+// reintenta si el track llega con más ancho que alto; en horizontal (PC), un
+// único intento 1920×1080. Devuelve null si se canceló a medias.
+async function abrirCamaraVertical(
+  camaraId: string,
+  audio: MediaTrackConstraints | false,
+  cancelado: () => boolean
+): Promise<MediaStream | null> {
+  const base = { deviceId: camaraId ? { exact: camaraId } : undefined };
+  const intentos: MediaTrackConstraints[] =
+    orientacionActual() === "vertical"
+      ? [
+          { ...base, width: { ideal: 1080 }, height: { ideal: 1920 } },
+          { ...base, facingMode: { ideal: "user" } },
+          { ...base, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        ]
+      : [{ ...base, width: { ideal: 1920 }, height: { ideal: 1080 } }];
+  let elegido = await abrirCamara(intentos[0], audio);
+  // Se suelta la cámara antes de cada reintento (en móvil no se puede abrir
+  // dos veces) y se queda con el primero que llegue vertical.
+  for (let i = 1; i < intentos.length && elegido.ancho > elegido.alto; i++) {
+    elegido.stream.getTracks().forEach((t) => t.stop());
+    if (cancelado()) return null;
+    elegido = await abrirCamara(intentos[i], audio);
+  }
+  // Ninguno llegó vertical: se vuelve al 1er intento y se graba tal cual
+  // (nunca recortado en un dispositivo vertical).
+  if (elegido.ancho > elegido.alto && intentos.length > 1) {
+    elegido.stream.getTracks().forEach((t) => t.stop());
+    if (cancelado()) return null;
+    elegido = await abrirCamara(intentos[0], audio);
+  }
+  return elegido.stream;
 }
 
 function detenerRecorder(recorder: MediaRecorder) {
@@ -392,10 +474,12 @@ export function Teleprompter() {
   const [aspecto, setAspecto] = useState(ASPECTO_DEFECTO);
   // Resolución cruda que entrega la cámara (videoWidth×videoHeight), última lectura.
   const [camaraRes, setCamaraRes] = useState("");
-  // Tamaño del video de la cámara en esta adquisición (null = aún no se mide).
-  const [camaraDim, setCamaraDim] = useState<{ w: number; h: number } | null>(
-    null
-  );
+  // Tamaño del video de la cámara en esta adquisición (null = aún no se mide),
+  // con la orientación del dispositivo al medirlo.
+  const [camaraDim, setCamaraDim] = useState<Dimension | null>(null);
+  // Última lectura de getSettings() del track (también la de "preparar").
+  const [lectura, setLectura] = useState<LecturaCamara | null>(null);
+  const [medirTick, setMedirTick] = useState(0);
   // Desplazamiento horizontal del recorte del canvas (−1…1, 0 = centro).
   const [desplazamiento, setDesplazamiento] = useState(0);
   // El canvas 9:16 (preview y fuente de la grabación) se usa solo si la cámara
@@ -403,10 +487,14 @@ export function Teleprompter() {
   // directo. Mientras no se conoce el tamaño del video no hay canvas.
   const [canvasFallo, setCanvasFallo] = useState(false);
   const [avisoVertical, setAvisoVertical] = useState<string | null>(null);
-  const canvasActivo =
-    !canvasFallo &&
+  const razon = razonCanvas(camaraDim, canvasFallo);
+  const canvasActivo = razon.activo;
+  // Teléfono en vertical que aun así recibe un track horizontal: se graba tal
+  // cual (sin recortar) y se avisa con la resolución real recibida.
+  const horizontalEnVertical =
     camaraDim !== null &&
-    Math.abs(camaraDim.w / camaraDim.h - ASPECTO_VERTICAL) > 0.02;
+    camaraDim.orientacion === "vertical" &&
+    camaraDim.w > camaraDim.h;
   // Resolución real de cada toma (id → "ancho×alto"), leída del video.
   const [resoluciones, setResoluciones] = useState<Record<number, string>>({});
   const [modo, setModo] = useState<Modo>("completa");
@@ -516,9 +604,6 @@ export function Teleprompter() {
   useEffect(() => {
     canvasEsperadoRef.current = canvasActivo;
   }, [canvasActivo]);
-
-  // Última lectura de la cámara en el ámbito de los ajustes y de las tomas.
-  const camaraTexto = camaraRes || "se mide al abrir la cámara";
 
   // La fase "grabar" ocupa todo el panel: oculta Sidebar, Header y BottomNav.
   const { setActivo: setInmersivo } = useInmersivo();
@@ -770,6 +855,38 @@ export function Teleprompter() {
     };
   }, [fase, hayMicrofonos, microfonoId, procesarAudio]);
 
+  // Diagnóstico en "preparar": con el permiso ya concedido, abre la cámara un
+  // instante con el mismo flujo de intentos que usa "grabar", lee getSettings()
+  // y la suelta. Así se ve qué entrega la cámara (y si habría canvas) sin
+  // empezar a grabar. "Volver a medir" repite la lectura.
+  const hayCamaras = camaras.length > 0;
+  const [midiendo, setMidiendo] = useState(false);
+  useEffect(() => {
+    if (fase !== "preparar" || !hayCamaras) return;
+    if (!navigator.mediaDevices?.getUserMedia) return;
+    let cancelado = false;
+    let stream: MediaStream | null = null;
+
+    (async () => {
+      setMidiendo(true);
+      try {
+        stream = await abrirCamaraVertical(camaraId, false, () => cancelado);
+        if (stream && !cancelado) setLectura(leerCamara(stream));
+      } catch {
+        // Sin lectura: no es crítico (el error real sale al grabar).
+      } finally {
+        stream?.getTracks().forEach((t) => t.stop());
+        stream = null;
+        if (!cancelado) setMidiendo(false);
+      }
+    })();
+
+    return () => {
+      cancelado = true;
+      stream?.getTracks().forEach((t) => t.stop());
+    };
+  }, [fase, hayCamaras, camaraId, medirTick]);
+
   // Adquiere el stream al entrar a la fase de grabación (o al reintentar).
   useEffect(() => {
     if (fase !== "grabar") return;
@@ -783,43 +900,17 @@ export function Teleprompter() {
         return;
       }
       try {
-        // Tamaño siempre "ideal" (nunca "exact"); sin aspectRatio. El 1er
-        // intento va según la orientación; los demás solo se prueban si el
-        // dispositivo está en vertical y la cámara entrega más ancho que alto.
-        const base = { deviceId: camaraId ? { exact: camaraId } : undefined };
-        const intentos: MediaTrackConstraints[] =
-          orientacionActual() === "vertical"
-            ? [
-                { ...base, width: { ideal: 1080 }, height: { ideal: 1920 } },
-                { ...base, facingMode: { ideal: "user" } },
-                { ...base, width: { ideal: 1920 }, height: { ideal: 1080 } },
-              ]
-            : [{ ...base, width: { ideal: 1920 }, height: { ideal: 1080 } }];
-        const audio = restriccionesAudio(microfonoId, procesarAudio);
-        let elegido = await abrirCamara(intentos[0], audio);
-        // Se suelta la cámara antes de cada reintento (en móvil no se puede
-        // abrir dos veces) y se queda con el primero que llegue vertical.
-        for (
-          let i = 1;
-          i < intentos.length && elegido.ancho > elegido.alto;
-          i++
-        ) {
-          elegido.stream.getTracks().forEach((t) => t.stop());
-          if (cancelado) return;
-          elegido = await abrirCamara(intentos[i], audio);
-        }
-        // Ninguno llegó vertical: se vuelve al 1er intento (la cámara entrega
-        // horizontal y se graba tal cual).
-        if (elegido.ancho > elegido.alto && intentos.length > 1) {
-          elegido.stream.getTracks().forEach((t) => t.stop());
-          if (cancelado) return;
-          elegido = await abrirCamara(intentos[0], audio);
-        }
-        const stream = elegido.stream;
+        const stream = await abrirCamaraVertical(
+          camaraId,
+          restriccionesAudio(microfonoId, procesarAudio),
+          () => cancelado
+        );
+        if (!stream) return;
         if (cancelado) {
           stream.getTracks().forEach((t) => t.stop());
           return;
         }
+        setLectura(leerCamara(stream));
         streamRef.current = stream;
         cadenaRef.current = crearCadenaAudio(
           new MediaStream(stream.getAudioTracks()),
@@ -1515,7 +1606,23 @@ export function Teleprompter() {
             />
             Guías en pantalla (encuadre)
           </label>
-          <p className="text-[11px] text-gray-400">Cámara: {camaraTexto}</p>
+          <div className="flex flex-col gap-1">
+            <p className="text-[11px] text-gray-500">
+              {describirLectura(lectura)} · canvas:{" "}
+              {razonCanvas(lectura, false).texto}
+              {midiendo ? " · midiendo…" : ""}
+            </p>
+            {hayCamaras && (
+              <button
+                type="button"
+                onClick={() => setMedirTick((n) => n + 1)}
+                disabled={midiendo}
+                className="self-start text-[11px] text-gray-500 underline disabled:opacity-50"
+              >
+                Volver a medir la cámara
+              </button>
+            )}
+          </div>
           <label className="flex items-center gap-2 text-sm text-gray-700">
             <input
               type="checkbox"
@@ -1619,16 +1726,21 @@ export function Teleprompter() {
   const botonCtrl =
     "flex h-10 items-center justify-center gap-1.5 rounded-xl bg-white/15 px-3 text-sm font-medium text-white transition hover:bg-white/25";
 
-  // Proporción real (y resolución cruda) del video de la cámara; cambia, p. ej.,
-  // al girar el teléfono. De ella depende si hace falta el canvas 9:16. No se
-  // actualiza mientras se graba, para no cambiar de fuente a mitad de toma.
+  // Proporción real (y resolución cruda) del video de la cámara. De ella y de
+  // la orientación del dispositivo (que se congela aquí) depende si se usa el
+  // canvas 9:16. Mientras se graba no se actualiza nada: ni el tamaño ni la
+  // orientación, así que girar el teléfono a mitad de toma no cambia de fuente.
   function actualizarAspecto(e: React.SyntheticEvent<HTMLVideoElement>) {
     const { videoWidth, videoHeight } = e.currentTarget;
     if (!(videoWidth > 0 && videoHeight > 0)) return;
     if (sesionRef.current) return;
     setAspecto(videoWidth / videoHeight);
     setCamaraRes(`${videoWidth}×${videoHeight}`);
-    setCamaraDim({ w: videoWidth, h: videoHeight });
+    setCamaraDim({
+      w: videoWidth,
+      h: videoHeight,
+      orientacion: orientacionActual(),
+    });
   }
 
   // Con canvas el marco es 9:16 fijo; sin canvas, la proporción de la cámara.
@@ -1848,6 +1960,19 @@ export function Teleprompter() {
               {avisoVertical}
             </p>
           )}
+
+          {horizontalEnVertical && camaraDim && (
+            <p className="absolute inset-x-2 bottom-[34%] rounded-lg bg-amber-500/90 px-3 py-1.5 text-center text-xs font-medium text-black">
+              La cámara entregó {camaraDim.w}×{camaraDim.h} (horizontal) con el
+              teléfono en vertical; se graba tal cual, sin recortar.
+            </p>
+          )}
+
+          {/* Diagnóstico siempre visible: lo que dice el track y si hay canvas. */}
+          <p className="pointer-events-none absolute left-2 top-[39%] max-w-[60%] rounded bg-black/60 px-2 py-1 text-[10px] leading-tight text-white/90">
+            {describirLectura(lectura)}
+            {camaraRes ? ` · video ${camaraRes}` : ""} · canvas: {razon.texto}
+          </p>
 
           {conteo !== null && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/30 text-9xl font-bold">
