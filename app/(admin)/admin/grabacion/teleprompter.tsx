@@ -364,12 +364,13 @@ async function abrirCamara(
 
 // Abre la cámara. Tamaño siempre "ideal" (nunca "exact"); sin aspectRatio.
 // - PC (dispositivo horizontal): un único intento 1920×1080, sin validar.
-// - Dispositivo vertical: prueba 1080×1920 → 1920×1080 → 720×1280 → 1280×720
+// - Dispositivo vertical: prueba 1920×1080 → 1080×1920 → 720×1280 → 1280×720
 //   → facingMode user y acepta el primero cuyo VIDEO (medido en un <video>,
 //   no getSettings) llegue vertical (alto > ancho) con alto ≥ ALTO_MIN_VERTICAL;
-//   el orden sale de lo medido en iPhone/Safari: con 1080×1920 y 720×1280
-//   ideales el video llega horizontal (o chico), y es el 1920×1080 ideal el
-//   que llega vertical (1080×1920), por eso va en 2.º lugar;
+//   el orden sale de lo medido en iPhone/Safari: el 1920×1080 ideal es el que
+//   llega vertical (1080×1920) ya en el primer intento, mientras que con
+//   1080×1920 y 720×1280 ideales llega horizontal (o chico), así que va
+//   primero para no abrir la cámara de más;
 //   si no cumple, suelta la cámara (en móvil no se puede abrir dos veces) y
 //   prueba el siguiente. Si ninguno cumple, reabre el de mayor área entre los
 //   que llegaron verticales; si ninguno llegó vertical, el 1er intento
@@ -389,8 +390,8 @@ async function abrirCamaraVertical(
   const vertical = orientacionActual() === "vertical";
   const intentos: MediaTrackConstraints[] = vertical
     ? [
-        { ...base, width: { ideal: 1080 }, height: { ideal: 1920 } },
         { ...base, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        { ...base, width: { ideal: 1080 }, height: { ideal: 1920 } },
         { ...base, width: { ideal: 720 }, height: { ideal: 1280 } },
         { ...base, width: { ideal: 1280 }, height: { ideal: 720 } },
         { ...base, facingMode: { ideal: "user" } },
