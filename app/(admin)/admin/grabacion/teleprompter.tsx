@@ -213,18 +213,29 @@ function dimensionReal(l: LecturaCamara | null): Dimension | null {
 }
 
 // Decide si se usa el canvas 9:16 y explica por qué (para mostrarlo en
-// pantalla). Solo en un dispositivo horizontal (PC) y con una cámara que no
-// entrega ≈9:16; en un teléfono en vertical nunca hay canvas.
+// pantalla). Se decide con el tamaño real del VIDEO:
+// - PC (dispositivo horizontal): canvas si la cámara no entrega ≈9:16.
+// - Dispositivo vertical: video vertical (alto > ancho) que no es ≈9:16
+//   (p. ej. 3:4) → canvas con recorte central; video ≈9:16 → directo; video
+//   horizontal (o cuadrado) → directo, nunca recortado (se avisa aparte).
 function razonCanvas(
   dim: Dimension | null,
   fallo: boolean
 ): { activo: boolean; texto: string } {
   if (!dim) return { activo: false, texto: "sin medir" };
   if (fallo) return { activo: false, texto: "no (falló; se graba directo)" };
-  if (dim.orientacion === "vertical")
-    return { activo: false, texto: "no (dispositivo vertical; se graba directo)" };
-  if (Math.abs(dim.w / dim.h - ASPECTO_VERTICAL) <= 0.02)
+  const ratio = dim.w / dim.h;
+  if (Math.abs(ratio - ASPECTO_VERTICAL) <= 0.02)
     return { activo: false, texto: "no (la cámara ya es ≈9:16; directo)" };
+  if (dim.orientacion === "vertical") {
+    if (dim.w >= dim.h)
+      return {
+        activo: false,
+        texto: "no (dispositivo vertical con video horizontal; se graba directo)",
+      };
+    const camara = Math.abs(ratio - 3 / 4) <= 0.02 ? "3:4" : `${dim.w}×${dim.h}`;
+    return { activo: true, texto: `ACTIVO (cámara ${camara} → recorte 9:16)` };
+  }
   return { activo: true, texto: "ACTIVO (recorte central 9:16)" };
 }
 
