@@ -364,9 +364,12 @@ async function abrirCamara(
 
 // Abre la cámara. Tamaño siempre "ideal" (nunca "exact"); sin aspectRatio.
 // - PC (dispositivo horizontal): un único intento 1920×1080, sin validar.
-// - Dispositivo vertical: prueba 1080×1920 → 720×1280 → 1920×1080 → 1280×720
+// - Dispositivo vertical: prueba 1080×1920 → 1920×1080 → 720×1280 → 1280×720
 //   → facingMode user y acepta el primero cuyo VIDEO (medido en un <video>,
 //   no getSettings) llegue vertical (alto > ancho) con alto ≥ ALTO_MIN_VERTICAL;
+//   el orden sale de lo medido en iPhone/Safari: con 1080×1920 y 720×1280
+//   ideales el video llega horizontal (o chico), y es el 1920×1080 ideal el
+//   que llega vertical (1080×1920), por eso va en 2.º lugar;
 //   si no cumple, suelta la cámara (en móvil no se puede abrir dos veces) y
 //   prueba el siguiente. Si ninguno cumple, reabre el de mayor área entre los
 //   que llegaron verticales; si ninguno llegó vertical, el 1er intento
@@ -387,8 +390,8 @@ async function abrirCamaraVertical(
   const intentos: MediaTrackConstraints[] = vertical
     ? [
         { ...base, width: { ideal: 1080 }, height: { ideal: 1920 } },
-        { ...base, width: { ideal: 720 }, height: { ideal: 1280 } },
         { ...base, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        { ...base, width: { ideal: 720 }, height: { ideal: 1280 } },
         { ...base, width: { ideal: 1280 }, height: { ideal: 720 } },
         { ...base, facingMode: { ideal: "user" } },
       ]
@@ -615,6 +618,14 @@ export function Teleprompter() {
   const [lectura, setLectura] = useState<LecturaCamara | null>(null);
   // Lectura en vivo (cada 500 ms y en resize/orientationchange) para el chip.
   const [vivo, setVivo] = useState<LecturaVivo | null>(null);
+  // El chip de diagnóstico de "grabar" solo se muestra con ?diag=1 en la URL.
+  // Es seguro leerlo al inicializar: el chip solo existe en "grabar", que
+  // nunca forma parte del HTML del servidor.
+  const [diag] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("diag") === "1"
+  );
   const [medirTick, setMedirTick] = useState(0);
   // Desplazamiento horizontal del recorte del canvas (−1…1, 0 = centro).
   const [desplazamiento, setDesplazamiento] = useState(0);
@@ -1091,7 +1102,9 @@ export function Teleprompter() {
   // orientationchange, junto a la orientación actual del dispositivo. Solo
   // lee: no altera la fuente ni la toma.
   useEffect(() => {
+    // Solo hace falta con el chip (?diag=1) o con el aviso de horizontal en vertical.
     if (fase !== "grabar" || !listo || enResultado) return;
+    if (!diag && !horizontalEnVertical) return;
     const leer = () => {
       const t = streamRef.current?.getVideoTracks()[0]?.getSettings();
       const v = videoRef.current;
@@ -1123,7 +1136,7 @@ export function Teleprompter() {
       video?.removeEventListener("resize", leer);
       dejarDeEscuchar();
     };
-  }, [fase, listo, enResultado]);
+  }, [fase, listo, enResultado, diag, horizontalEnVertical]);
 
   // Si el dispositivo cambia de orientación FUERA de una toma (en "preparar",
   // o en "grabar" sin grabar ni cuenta regresiva), reabre la cámara con
@@ -2172,13 +2185,16 @@ export function Teleprompter() {
             </p>
           )}
 
-          {/* Diagnóstico siempre visible y en vivo: track (getSettings), video
-              (videoWidth×videoHeight), orientación del dispositivo y canvas. */}
-          <p className="pointer-events-none absolute left-2 top-[39%] max-w-[60%] rounded bg-black/60 px-2 py-1 text-[10px] leading-tight text-white/90">
-            getSettings {vivo?.track ?? "—"} · video {vivo?.video ?? "—"} ·
-            dispositivo {vivo?.orientacion ?? "—"} · canvas: {razon.texto} ·
-            intentos: {lectura?.intentos.join(", ") || "—"}
-          </p>
+          {/* Diagnóstico en vivo (solo con ?diag=1): track (getSettings), video
+              (videoWidth×videoHeight), orientación del dispositivo, canvas e
+              intentos de apertura de la cámara. */}
+          {diag && (
+            <p className="pointer-events-none absolute left-2 top-[39%] max-w-[60%] rounded bg-black/60 px-2 py-1 text-[10px] leading-tight text-white/90">
+              getSettings {vivo?.track ?? "—"} · video {vivo?.video ?? "—"} ·
+              dispositivo {vivo?.orientacion ?? "—"} · canvas: {razon.texto} ·
+              intentos: {lectura?.intentos.join(", ") || "—"}
+            </p>
+          )}
 
           {conteo !== null && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/30 text-9xl font-bold">
