@@ -26,7 +26,6 @@ const MULT_MAX = 1.6;
 const RESALTE = ["bg-[#54A6D8]/40"]; // clases de la línea que se está leyendo
 const GANANCIA_MIN = 1;
 const GANANCIA_MAX = 6;
-const ASPECTO_DEFECTO = 16 / 9; // hasta que el video informa su tamaño real
 const MAX_TOMAS = 5;
 const LIMITE_DURACION_S = 18;
 // Umbral de "ya hay voz" para medir el tiempo muerto inicial (dBFS, después
@@ -419,14 +418,17 @@ export function Teleprompter() {
   const [conteo, setConteo] = useState<number | null>(null);
   const [segundos, setSegundos] = useState(0);
   const [intento, setIntento] = useState(0);
-  const [aspecto, setAspecto] = useState(ASPECTO_DEFECTO);
   const [forzarVertical, setForzarVertical] = useState(false);
-  const [encuadre, setEncuadre] = useState<Encuadre>("ajustar");
+  // "llenar" = recorte central tipo cover: llena el lienzo vertical sin barras
+  // negras ni deformación.
+  const [encuadre, setEncuadre] = useState<Encuadre>("llenar");
   const [zoom, setZoom] = useState(1);
   // Resolución cruda que entrega la cámara (videoWidth×videoHeight), última lectura.
   const [camaraRes, setCamaraRes] = useState("");
-  // Esta adquisición graba desde el canvas 9:16 (el preview es ese canvas).
-  const [canvasActivo, setCanvasActivo] = useState(false);
+  // El canvas 9:16 (preview y fuente de la grabación) está activo siempre,
+  // salvo que haya fallado (entonces se graba la cámara directa).
+  const [canvasFallo, setCanvasFallo] = useState(false);
+  const canvasActivo = !canvasFallo;
   const [avisoVertical, setAvisoVertical] = useState<string | null>(null);
   // Resolución real de cada toma (id → "ancho×alto"), leída del video.
   const [resoluciones, setResoluciones] = useState<Record<number, string>>({});
@@ -451,7 +453,7 @@ export function Teleprompter() {
   const canvasFalloRef = useRef(false);
   // Lo lee el bucle del canvas: los cambios se ven en vivo sin reiniciarlo.
   const ajusteRef = useRef<{ encuadre: Encuadre; zoom: number }>({
-    encuadre: "ajustar",
+    encuadre: "llenar",
     zoom: 1,
   });
   const streamRef = useRef<MediaStream | null>(null);
@@ -580,7 +582,7 @@ export function Teleprompter() {
           guias?: boolean;
           cortarAlFinal?: boolean;
           forzarVertical?: boolean;
-          encuadre?: string;
+          encuadreCanvas?: string;
           zoom?: number;
           preset?: string;
         };
@@ -599,8 +601,10 @@ export function Teleprompter() {
           setCortarAlFinal(d.cortarAlFinal);
         if (typeof d.forzarVertical === "boolean")
           setForzarVertical(d.forzarVertical);
-        if (d.encuadre === "ajustar" || d.encuadre === "llenar")
-          setEncuadre(d.encuadre);
+        // Clave nueva (encuadreCanvas): el "ajustar" que quedó guardado como
+        // valor por defecto con la clave anterior (encuadre) se ignora.
+        if (d.encuadreCanvas === "ajustar" || d.encuadreCanvas === "llenar")
+          setEncuadre(d.encuadreCanvas);
         if (typeof d.zoom === "number")
           setZoom(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, d.zoom)));
         if (d.preset && d.preset in PRESETS) setPreset(d.preset as PresetId);
@@ -629,7 +633,7 @@ export function Teleprompter() {
           guias,
           cortarAlFinal,
           forzarVertical,
-          encuadre,
+          encuadreCanvas: encuadre,
           zoom,
           preset,
         })
@@ -872,8 +876,8 @@ export function Teleprompter() {
       cancelado = true;
       detenerStream();
       setListo(false);
-      // Cada adquisición decide de nuevo si usa el canvas.
-      setCanvasActivo(false);
+      // Cada adquisición vuelve a intentar el canvas.
+      setCanvasFallo(false);
       setAvisoVertical(null);
       canvasFalloRef.current = false;
     };
@@ -897,7 +901,7 @@ export function Teleprompter() {
       stream = canvas.captureStream(CANVAS_FPS);
     } catch {
       canvasFalloRef.current = true;
-      setCanvasActivo(false);
+      setCanvasFallo(true);
       setAvisoVertical(MENSAJE_FALLO_VERTICAL);
       return;
     }
@@ -1052,6 +1056,9 @@ export function Teleprompter() {
     const cadena = cadenaRef.current;
     const directo = streamRef.current;
     if (!directo || !cadena) return;
+    // Con el canvas vigente (no fallado) siempre se graba de su captureStream;
+    // si aún no existe no se cae en silencio al stream directo.
+    if (!canvasFalloRef.current && !canvasStreamRef.current) return;
     // Con canvas activo se intenta primero grabar de él; si el recorder falla
     // (constructor o start), se cae al stream directo.
     const fuentes: Origen[] = canvasStreamRef.current
@@ -1080,7 +1087,7 @@ export function Teleprompter() {
     if (fuentes[0] === "canvas" && origen === "directo") {
       canvasFalloRef.current = true;
       // El preview vuelve al video de la cámara: lo que se ve es lo que se graba.
-      setCanvasActivo(false);
+      setCanvasFallo(true);
       setAvisoVertical(MENSAJE_FALLO_VERTICAL);
     }
     sesionRef.current = {
@@ -1710,24 +1717,17 @@ export function Teleprompter() {
   const botonCtrl =
     "flex h-10 items-center justify-center gap-1.5 rounded-xl bg-white/15 px-3 text-sm font-medium text-white transition hover:bg-white/25";
 
-  // Tamaño real del video de la cámara (cambia, p. ej., al girar el
-  // teléfono). Además decide si esta adquisición graba desde el canvas 9:16:
-  // sí cuando "Forzar vertical" está activo y el video no llega ya en 9:16.
-  // No se cambia mientras se graba, ni si el canvas ya falló.
+  // Tamaño real (crudo) del video de la cámara; cambia, p. ej., al girar el
+  // teléfono. Solo informativo: el canvas está activo siempre que no falle.
   function actualizarAspecto(e: React.SyntheticEvent<HTMLVideoElement>) {
     const { videoWidth, videoHeight } = e.currentTarget;
     if (!(videoWidth > 0 && videoHeight > 0)) return;
-    const ratio = videoWidth / videoHeight;
-    setAspecto(ratio);
     setCamaraRes(`${videoWidth}×${videoHeight}`);
-    if (sesionRef.current || canvasFalloRef.current) return;
-    setCanvasActivo(
-      forzarVertical && Math.abs(ratio - ASPECTO_VERTICAL) > 0.02
-    );
   }
 
-  // Con canvas el marco es 9:16 fijo; sin canvas, la proporción de la cámara.
-  const aspectoMarco = canvasActivo ? ASPECTO_VERTICAL : aspecto;
+  // El marco de la fase "grabar" es siempre 9:16, sin depender del canvas ni
+  // de la proporción de la cámara.
+  const aspectoMarco = ASPECTO_VERTICAL;
 
   const tomaSel = tomas.find((t) => t.id === tomaId) ?? tomas[tomas.length - 1];
   const tomasLlenas = tomas.length >= MAX_TOMAS;
