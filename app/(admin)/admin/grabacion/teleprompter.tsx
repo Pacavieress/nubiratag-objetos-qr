@@ -36,19 +36,6 @@ const UMBRAL_VOZ_DB = -40;
 // de espera, ambos contados desde que el scroll llega al final.
 const SILENCIO_CORTE_MS = 600;
 const TOPE_CORTE_MS = 4000;
-// Salida vertical forzada: se graba desde un canvas 1080×1920 al que se
-// dibuja el video recortado al centro (cover).
-const ASPECTO_VERTICAL = 9 / 16;
-const CANVAS_W = 1080;
-const CANVAS_H = 1920;
-const CANVAS_FPS = 30;
-const ZOOM_MIN = 1;
-const ZOOM_MAX = 1.5;
-// Marca de agua de texto: lista pero desactivada por ahora.
-const MARCA_AGUA_ACTIVA = false;
-const MARCA_AGUA_TEXTO = "nubira.cl";
-const MENSAJE_FALLO_VERTICAL =
-  "No se pudo forzar vertical; se graba con el formato de la cámara.";
 const TIMEOUT_PERMISO_MS = 10000;
 const MENSAJE_TIMEOUT_PERMISO =
   "El navegador no respondió a la solicitud. Revisa el permiso del sitio en la configuración del navegador o ábrelo en Chrome o Safari.";
@@ -59,10 +46,6 @@ type Modo = "completa" | "gancho";
 type Archivo = { url: string; ext: string };
 type Grabador = { recorder: MediaRecorder; fin: Promise<Archivo> };
 type Orientacion = "vertical" | "horizontal";
-// De dónde sale el video de la toma: canvas 9:16, cámara directa, o cámara
-// directa porque el canvas falló.
-type Origen = "canvas" | "directo" | "directo-fallo";
-type Encuadre = "ajustar" | "llenar";
 type Toma = Archivo & {
   id: number;
   modo: Modo;
@@ -70,10 +53,7 @@ type Toma = Archivo & {
   muertoMs: number | null;
   muertoFinalMs: number | null;
   orientacion: Orientacion;
-  origen: Origen;
   camara: string; // resolución cruda de la cámara al grabar ("" si no se leyó)
-  encuadre: Encuadre;
-  zoom: number;
 };
 type Sesion = {
   principal: Grabador;
@@ -82,10 +62,7 @@ type Sesion = {
   ultimaVoz: number | null; // performance.now() de la última voz detectada
   modo: Modo;
   orientacion: Orientacion;
-  origen: Origen;
   camara: string;
-  encuadre: Encuadre;
-  zoom: number;
 };
 
 function elegirMimeType(): string {
@@ -178,14 +155,14 @@ function nombreArchivo(ext: string, sufijo?: string): string {
   return `grabacion-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${sufijo ? `-${sufijo}` : ""}.${ext}`;
 }
 
-// Video de la fuente (cámara o canvas) + audio ya amplificado y limitado.
+// Video directo de la cámara + audio ya amplificado y limitado.
 function streamParaGrabar(
-  fuenteVideo: MediaStream | null,
+  stream: MediaStream | null,
   cadena: CadenaAudio | null
 ): MediaStream | null {
-  if (!fuenteVideo || !cadena) return null;
+  if (!stream || !cadena) return null;
   return new MediaStream([
-    ...fuenteVideo.getVideoTracks(),
+    ...stream.getVideoTracks(),
     ...cadena.destino.stream.getAudioTracks(),
   ]);
 }
@@ -196,39 +173,6 @@ function orientacionActual(): Orientacion {
     : "horizontal";
 }
 
-// Dibuja el video en el lienzo 9:16, centrado. "ajustar": el video completo,
-// sin recorte (el resto queda en negro); "llenar": recorte que cubre todo el
-// lienzo. El zoom acerca desde el centro.
-function dibujarEncuadre(
-  ctx: CanvasRenderingContext2D,
-  video: HTMLVideoElement,
-  encuadre: Encuadre,
-  zoom: number
-) {
-  const vw = video.videoWidth;
-  const vh = video.videoHeight;
-  if (!vw || !vh || video.readyState < 2) return;
-  const base =
-    encuadre === "llenar"
-      ? Math.max(CANVAS_W / vw, CANVAS_H / vh)
-      : Math.min(CANVAS_W / vw, CANVAS_H / vh);
-  const dw = vw * base * zoom;
-  const dh = vh * base * zoom;
-  ctx.fillStyle = "#000";
-  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-  ctx.drawImage(
-    video,
-    0,
-    0,
-    vw,
-    vh,
-    (CANVAS_W - dw) / 2,
-    (CANVAS_H - dh) / 2,
-    dw,
-    dh
-  );
-}
-
 // Pide la cámara y devuelve el stream con el tamaño que dice entregar.
 async function abrirCamara(
   video: MediaTrackConstraints,
@@ -237,21 +181,6 @@ async function abrirCamara(
   const stream = await navigator.mediaDevices.getUserMedia({ video, audio });
   const s = stream.getVideoTracks()[0]?.getSettings();
   return { stream, ancho: s?.width ?? 0, alto: s?.height ?? 0 };
-}
-
-// Texto blanco al 65 % con sombra suave, centrado en el tercio superior
-// (a ~12 % del borde de arriba).
-function dibujarMarcaAgua(ctx: CanvasRenderingContext2D) {
-  ctx.save();
-  ctx.font = "700 56px Arial, Helvetica, sans-serif";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillStyle = "rgba(255,255,255,0.65)";
-  ctx.shadowColor = "rgba(0,0,0,0.4)";
-  ctx.shadowBlur = 8;
-  ctx.shadowOffsetY = 2;
-  ctx.fillText(MARCA_AGUA_TEXTO, CANVAS_W / 2, CANVAS_H * 0.12);
-  ctx.restore();
 }
 
 function detenerRecorder(recorder: MediaRecorder) {
@@ -357,11 +286,6 @@ function dividirBloques(guion: string): string[] {
     .filter(Boolean);
 }
 
-// Suma/resta al zoom del canvas, en pasos de 0.1 dentro del rango.
-function ajustarZoom(v: number, delta: number): number {
-  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round((v + delta) * 10) / 10));
-}
-
 // Suma/resta al multiplicador de ritmo, en pasos de 0.1 dentro del rango.
 function ajustarMult(v: number, delta: number): number {
   return Math.min(MULT_MAX, Math.max(MULT_MIN, Math.round((v + delta) * 10) / 10));
@@ -420,14 +344,8 @@ export function Teleprompter() {
   const [segundos, setSegundos] = useState(0);
   const [intento, setIntento] = useState(0);
   const [aspecto, setAspecto] = useState(ASPECTO_DEFECTO);
-  const [forzarVertical, setForzarVertical] = useState(false);
-  const [encuadre, setEncuadre] = useState<Encuadre>("ajustar");
-  const [zoom, setZoom] = useState(1);
   // Resolución cruda que entrega la cámara (videoWidth×videoHeight), última lectura.
   const [camaraRes, setCamaraRes] = useState("");
-  // Esta adquisición graba desde el canvas 9:16 (el preview es ese canvas).
-  const [canvasActivo, setCanvasActivo] = useState(false);
-  const [avisoVertical, setAvisoVertical] = useState<string | null>(null);
   // Resolución real de cada toma (id → "ancho×alto"), leída del video.
   const [resoluciones, setResoluciones] = useState<Record<number, string>>({});
   const [modo, setModo] = useState<Modo>("completa");
@@ -445,15 +363,6 @@ export function Teleprompter() {
   const activoRef = useRef(0);
   const medidorRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const canvasStreamRef = useRef<MediaStream | null>(null);
-  // Si el canvas falló, no se vuelve a activar en esta adquisición.
-  const canvasFalloRef = useRef(false);
-  // Lo lee el bucle del canvas: los cambios se ven en vivo sin reiniciarlo.
-  const ajusteRef = useRef<{ encuadre: Encuadre; zoom: number }>({
-    encuadre: "ajustar",
-    zoom: 1,
-  });
   const streamRef = useRef<MediaStream | null>(null);
   const cadenaRef = useRef<CadenaAudio | null>(null);
   const gananciaRef = useRef(ganancia);
@@ -529,10 +438,6 @@ export function Teleprompter() {
     ritmoRef.current = { palabrasPorSeg, mult };
   }, [palabrasPorSeg, mult]);
 
-  useEffect(() => {
-    ajusteRef.current = { encuadre, zoom };
-  }, [encuadre, zoom]);
-
   // Última lectura de la cámara en el ámbito de los ajustes y de las tomas.
   const camaraTexto = camaraRes || "se mide al abrir la cámara";
 
@@ -553,19 +458,6 @@ export function Teleprompter() {
     if (cadenaRef.current) cadenaRef.current.gain.gain.value = ganancia;
   }, [ganancia]);
 
-  // "Forzar vertical" arranca encendido en móvil (pantalla táctil como
-  // entrada principal); si hay un valor guardado, lo pisa el efecto de abajo.
-  useEffect(() => {
-    try {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setForzarVertical(
-        window.matchMedia("(hover: none) and (pointer: coarse)").matches
-      );
-    } catch {
-      // matchMedia no disponible: se queda apagado.
-    }
-  }, []);
-
   // Persistencia: guion y preferencias (nada de la grabación en curso).
   useEffect(() => {
     try {
@@ -579,9 +471,6 @@ export function Teleprompter() {
           cuentaSeg?: number;
           guias?: boolean;
           cortarAlFinal?: boolean;
-          forzarVertical?: boolean;
-          encuadre?: string;
-          zoom?: number;
           preset?: string;
         };
         // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -597,12 +486,6 @@ export function Teleprompter() {
         if (typeof d.guias === "boolean") setGuias(d.guias);
         if (typeof d.cortarAlFinal === "boolean")
           setCortarAlFinal(d.cortarAlFinal);
-        if (typeof d.forzarVertical === "boolean")
-          setForzarVertical(d.forzarVertical);
-        if (d.encuadre === "ajustar" || d.encuadre === "llenar")
-          setEncuadre(d.encuadre);
-        if (typeof d.zoom === "number")
-          setZoom(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, d.zoom)));
         if (d.preset && d.preset in PRESETS) setPreset(d.preset as PresetId);
         if (typeof d.ganancia === "number")
           setGanancia(
@@ -628,9 +511,6 @@ export function Teleprompter() {
           cuentaSeg,
           guias,
           cortarAlFinal,
-          forzarVertical,
-          encuadre,
-          zoom,
           preset,
         })
       );
@@ -645,9 +525,6 @@ export function Teleprompter() {
     cuentaSeg,
     guias,
     cortarAlFinal,
-    forzarVertical,
-    encuadre,
-    zoom,
     preset,
   ]);
 
@@ -655,8 +532,6 @@ export function Teleprompter() {
   const detenerStream = useCallback(() => {
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
-    canvasStreamRef.current?.getTracks().forEach((t) => t.stop());
-    canvasStreamRef.current = null;
     const cadena = cadenaRef.current;
     cadenaRef.current = null;
     if (cadena) {
@@ -845,7 +720,8 @@ export function Teleprompter() {
           if (cancelado) return;
           elegido = await abrirCamara(intentos[i], audio);
         }
-        // Ninguno llegó vertical: se vuelve al 1er intento (lo resuelve el canvas).
+        // Ninguno llegó vertical: se vuelve al 1er intento (la cámara entrega
+        // horizontal y se graba tal cual).
         if (elegido.ancho > elegido.alto && intentos.length > 1) {
           elegido.stream.getTracks().forEach((t) => t.stop());
           if (cancelado) return;
@@ -872,60 +748,10 @@ export function Teleprompter() {
       cancelado = true;
       detenerStream();
       setListo(false);
-      // Cada adquisición decide de nuevo si usa el canvas.
-      setCanvasActivo(false);
-      setAvisoVertical(null);
-      canvasFalloRef.current = false;
     };
     // camaraId/microfonoId se fijan al iniciar; no deben re-adquirir el stream.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fase, intento, detenerStream]);
-
-  // Canvas 9:16: dibuja el video encuadrado y expone su captureStream
-  // para grabar. El preview es este mismo canvas, así que lo que se ve es lo
-  // que se graba.
-  useEffect(() => {
-    if (!canvasActivo || !listo || enResultado) return;
-    const canvas = canvasRef.current;
-    const video = videoRef.current;
-    if (!canvas || !video) return;
-    const ctx = canvas.getContext("2d");
-    let stream: MediaStream;
-    try {
-      if (!ctx || typeof canvas.captureStream !== "function")
-        throw new Error("canvas.captureStream no disponible");
-      stream = canvas.captureStream(CANVAS_FPS);
-    } catch {
-      canvasFalloRef.current = true;
-      setCanvasActivo(false);
-      setAvisoVertical(MENSAJE_FALLO_VERTICAL);
-      return;
-    }
-    canvasStreamRef.current = stream;
-
-    let raf = 0;
-    let ultimo = 0;
-    const dibujar = (t: number) => {
-      raf = requestAnimationFrame(dibujar);
-      // ~30 fps, igual que captureStream(30): se saltan los frames de más.
-      if (t - ultimo < 1000 / CANVAS_FPS - 2) return;
-      ultimo = t;
-      dibujarEncuadre(
-        ctx,
-        video,
-        ajusteRef.current.encuadre,
-        ajusteRef.current.zoom
-      );
-      if (MARCA_AGUA_ACTIVA) dibujarMarcaAgua(ctx);
-    };
-    raf = requestAnimationFrame(dibujar);
-
-    return () => {
-      cancelAnimationFrame(raf);
-      stream.getTracks().forEach((t) => t.stop());
-      if (canvasStreamRef.current === stream) canvasStreamRef.current = null;
-    };
-  }, [canvasActivo, listo, enResultado]);
 
   // Resalta la línea del guion que cruza la línea de lectura (mitad de la
   // ventana) y deduce de ella el bloque actual. El resaltado va por DOM y no
@@ -1049,39 +875,15 @@ export function Teleprompter() {
   // Arranque: el recorder y el scroll se disparan en el mismo handler (un
   // solo batch de React), sin pausa entre el clic/cuenta y el guion.
   const empezarGrabacion = useCallback(() => {
-    const cadena = cadenaRef.current;
-    const directo = streamRef.current;
-    if (!directo || !cadena) return;
-    // Con canvas activo se intenta primero grabar de él; si el recorder falla
-    // (constructor o start), se cae al stream directo.
-    const fuentes: Origen[] = canvasStreamRef.current
-      ? ["canvas", "directo"]
-      : ["directo"];
-    let principal: Grabador | null = null;
-    let origen: Origen = "directo";
-    for (const f of fuentes) {
-      const paraGrabar = streamParaGrabar(
-        f === "canvas" ? canvasStreamRef.current : directo,
-        cadena
-      );
-      if (!paraGrabar) continue;
-      try {
-        principal = crearGrabador(paraGrabar, elegirMimeType());
-        origen = f;
-        break;
-      } catch {
-        // Se prueba la siguiente fuente.
-      }
-    }
-    if (!principal) {
+    // Siempre el stream directo de la cámara + el audio del GainNode.
+    const paraGrabar = streamParaGrabar(streamRef.current, cadenaRef.current);
+    if (!paraGrabar) return;
+    let principal: Grabador;
+    try {
+      principal = crearGrabador(paraGrabar, elegirMimeType());
+    } catch {
       setErrorGrabar("Este navegador no puede grabar video.");
       return;
-    }
-    if (fuentes[0] === "canvas" && origen === "directo") {
-      canvasFalloRef.current = true;
-      // El preview vuelve al video de la cámara: lo que se ve es lo que se graba.
-      setCanvasActivo(false);
-      setAvisoVertical(MENSAJE_FALLO_VERTICAL);
     }
     sesionRef.current = {
       principal,
@@ -1090,15 +892,9 @@ export function Teleprompter() {
       ultimaVoz: null,
       modo,
       orientacion: orientacionActual(),
-      origen:
-        origen === "directo" && canvasFalloRef.current
-          ? "directo-fallo"
-          : origen,
       camara: videoRef.current
         ? `${videoRef.current.videoWidth}×${videoRef.current.videoHeight}`
         : "",
-      encuadre: ajusteRef.current.encuadre,
-      zoom: ajusteRef.current.zoom,
     };
     setSegundos(0);
     setFinScroll(null);
@@ -1131,10 +927,7 @@ export function Teleprompter() {
         muertoMs: s.muertoMs,
         muertoFinalMs,
         orientacion: s.orientacion,
-        origen: s.origen,
         camara: s.camara,
-        encuadre: s.encuadre,
-        zoom: s.zoom,
       };
       setTomas((prev) => [...prev, toma]);
       setTomaId(id);
@@ -1552,61 +1345,7 @@ export function Teleprompter() {
             />
             Guías en pantalla (encuadre)
           </label>
-          <label className="flex items-center gap-2 text-sm text-gray-700">
-            <input
-              type="checkbox"
-              checked={forzarVertical}
-              onChange={(e) => setForzarVertical(e.target.checked)}
-              className="h-4 w-4 accent-[#54A6D8]"
-            />
-            Forzar vertical 9:16
-          </label>
-          <p className="-mt-3 text-xs text-gray-500">
-            Si la cámara no entrega 9:16, graba un recorte centrado de 1080×1920
-            (lo que ves es lo que se graba). Consume más CPU.
-          </p>
-          <div className="flex flex-col gap-1 text-sm text-gray-600">
-            Encuadre del canvas
-            <div className="grid grid-cols-2 gap-1" role="group">
-              {(["ajustar", "llenar"] as const).map((e) => (
-                <button
-                  key={e}
-                  type="button"
-                  aria-pressed={encuadre === e}
-                  onClick={() => setEncuadre(e)}
-                  className={`rounded-lg border px-2 py-1.5 text-sm transition ${
-                    encuadre === e
-                      ? "border-[#54A6D8] bg-[#54A6D8]/10 font-semibold text-gray-900"
-                      : "border-gray-200 text-gray-600 hover:border-[#54A6D8]/40"
-                  }`}
-                >
-                  {e === "ajustar" ? "Ajustar" : "Llenar"}
-                </button>
-              ))}
-            </div>
-          </div>
-          <label className="flex flex-col gap-1 text-sm text-gray-600">
-            Zoom: {zoom.toFixed(1)}x
-            <input
-              type="range"
-              min={ZOOM_MIN}
-              max={ZOOM_MAX}
-              step={0.1}
-              value={zoom}
-              onChange={(e) => setZoom(Number(e.target.value))}
-              className="accent-[#54A6D8]"
-            />
-          </label>
-          <p className="-mt-3 text-xs text-gray-500">
-            «Ajustar» muestra el video completo (con negro alrededor); «Llenar»
-            recorta para cubrir todo el lienzo. Solo aplican al grabar con el
-            canvas.
-          </p>
-          <p className="-mt-3 text-[11px] text-gray-400">
-            Cámara: {camaraTexto} · Encuadre:{" "}
-            {encuadre === "ajustar" ? "Ajustar" : "Llenar"} · Zoom:{" "}
-            {zoom.toFixed(1)}x
-          </p>
+          <p className="text-[11px] text-gray-400">Cámara: {camaraTexto}</p>
           <label className="flex items-center gap-2 text-sm text-gray-700">
             <input
               type="checkbox"
@@ -1710,24 +1449,14 @@ export function Teleprompter() {
   const botonCtrl =
     "flex h-10 items-center justify-center gap-1.5 rounded-xl bg-white/15 px-3 text-sm font-medium text-white transition hover:bg-white/25";
 
-  // Tamaño real del video de la cámara (cambia, p. ej., al girar el
-  // teléfono). Además decide si esta adquisición graba desde el canvas 9:16:
-  // sí cuando "Forzar vertical" está activo y el video no llega ya en 9:16.
-  // No se cambia mientras se graba, ni si el canvas ya falló.
+  // Proporción real (y resolución cruda) del video de la cámara; cambia, p. ej.,
+  // al girar el teléfono. El marco de la fase "grabar" sigue esa proporción.
   function actualizarAspecto(e: React.SyntheticEvent<HTMLVideoElement>) {
     const { videoWidth, videoHeight } = e.currentTarget;
     if (!(videoWidth > 0 && videoHeight > 0)) return;
-    const ratio = videoWidth / videoHeight;
-    setAspecto(ratio);
+    setAspecto(videoWidth / videoHeight);
     setCamaraRes(`${videoWidth}×${videoHeight}`);
-    if (sesionRef.current || canvasFalloRef.current) return;
-    setCanvasActivo(
-      forzarVertical && Math.abs(ratio - ASPECTO_VERTICAL) > 0.02
-    );
   }
-
-  // Con canvas el marco es 9:16 fijo; sin canvas, la proporción de la cámara.
-  const aspectoMarco = canvasActivo ? ASPECTO_VERTICAL : aspecto;
 
   const tomaSel = tomas.find((t) => t.id === tomaId) ?? tomas[tomas.length - 1];
   const tomasLlenas = tomas.length >= MAX_TOMAS;
@@ -1792,22 +1521,8 @@ export function Teleprompter() {
             <strong className="tabular-nums">
               {resoluciones[tomaSel.id] ?? "…"}
             </strong>{" "}
-            · Dispositivo: {tomaSel.orientacion} · Formato:{" "}
-            {tomaSel.origen === "canvas"
-              ? "canvas 9:16"
-              : tomaSel.origen === "directo"
-                ? "cámara directa"
-                : "cámara directa (falló el canvas)"}{" "}
-            · Cámara: {tomaSel.camara || "—"} · Encuadre:{" "}
-            {tomaSel.origen === "canvas"
-              ? tomaSel.encuadre === "ajustar"
-                ? "Ajustar"
-                : "Llenar"
-              : "n/a"}{" "}
-            · Zoom:{" "}
-            {tomaSel.origen === "canvas"
-              ? `${tomaSel.zoom.toFixed(1)}x`
-              : "n/a"}
+            · Dispositivo: {tomaSel.orientacion} · Cámara:{" "}
+            {tomaSel.camara || "—"}
           </p>
 
           <div className="flex flex-wrap justify-center gap-3">
@@ -1867,43 +1582,27 @@ export function Teleprompter() {
           <div
             className="relative min-w-0 overflow-hidden"
             style={{
-              aspectRatio: aspectoMarco,
-              width: `min(100%, calc((100svh - env(safe-area-inset-top, 0px)) * ${aspectoMarco}))`,
+              aspectRatio: aspecto,
+              width: `min(100%, calc((100svh - env(safe-area-inset-top, 0px)) * ${aspecto}))`,
             }}
           >
-          {/* Con canvas, el video de la cámara es solo la fuente (oculto pero
-              en el DOM para que iOS lo decodifique) y el preview es el
-              canvas; sin canvas, el video se ve como siempre. */}
           <video
             ref={videoRef}
             autoPlay
             muted
             playsInline
-            className={
-              canvasActivo
-                ? "pointer-events-none absolute left-0 top-0 h-px w-px opacity-0"
-                : "h-full w-full object-contain"
-            }
+            className="h-full w-full object-cover"
             onLoadedMetadata={actualizarAspecto}
             onResize={actualizarAspecto}
-            style={canvasActivo ? undefined : { transform: "scaleX(-1)" }}
+            style={{ transform: "scaleX(-1)" }}
           />
-          {canvasActivo && (
-            <canvas
-              ref={canvasRef}
-              width={CANVAS_W}
-              height={CANVAS_H}
-              className="h-full w-full"
-              style={{ transform: "scaleX(-1)" }}
-            />
-          )}
 
           {/* Guías: overlay DOM, no forman parte del stream que se graba. */}
           {guias && (
             <div aria-hidden className="pointer-events-none absolute inset-0">
               {/* Recorte vertical 9:16 centrado: lo que sobrevive si después
                   se recorta a vertical. Solo con cámara horizontal. */}
-              {aspectoMarco > 1 && (
+              {aspecto > 1 && (
                 <div
                   className="absolute inset-y-0 left-1/2 -translate-x-1/2 border-x border-dashed border-white/40"
                   style={{ aspectRatio: "9 / 16" }}
@@ -1944,12 +1643,6 @@ export function Teleprompter() {
               REC {formatoTiempo(segundos)} ·{" "}
               {etiquetaBloque(bloqueActivo, bloquesGrab.length)}
             </div>
-          )}
-
-          {avisoVertical && (
-            <p className="absolute inset-x-2 bottom-[24%] rounded-lg bg-amber-500/90 px-3 py-1.5 text-center text-xs font-medium text-black">
-              {avisoVertical}
-            </p>
           )}
 
           {conteo !== null && (
@@ -2017,46 +1710,6 @@ export function Teleprompter() {
               <Frame className="h-4 w-4" />
               Guías
             </button>
-            {/* Encuadre y zoom del canvas: se tantean con el preview y se
-                bloquean al grabar para que el encuadre no salte a mitad de toma. */}
-            {canvasActivo && (
-              <>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setEncuadre((e) => (e === "ajustar" ? "llenar" : "ajustar"))
-                  }
-                  disabled={grabando}
-                  className={`${botonCtrl} disabled:opacity-50`}
-                  title="Ajustar: video completo · Llenar: recorte"
-                >
-                  {encuadre === "ajustar" ? "Ajustar" : "Llenar"}
-                </button>
-                <div className="flex items-center gap-1 text-xs">
-                  <button
-                    type="button"
-                    aria-label="Reducir zoom"
-                    onClick={() => setZoom((z) => ajustarZoom(z, -0.1))}
-                    disabled={grabando}
-                    className={`${botonCtrl} disabled:opacity-50`}
-                  >
-                    <Minus className="h-4 w-4" />
-                  </button>
-                  <span className="w-20 text-center">
-                    Zoom {zoom.toFixed(1)}x
-                  </span>
-                  <button
-                    type="button"
-                    aria-label="Aumentar zoom"
-                    onClick={() => setZoom((z) => ajustarZoom(z, 0.1))}
-                    disabled={grabando}
-                    className={`${botonCtrl} disabled:opacity-50`}
-                  >
-                    <Plus className="h-4 w-4" />
-                  </button>
-                </div>
-              </>
-            )}
             <div className="flex items-center gap-1 text-xs" title="Flechas ↑↓">
               <button
                 type="button"
