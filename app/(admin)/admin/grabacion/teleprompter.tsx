@@ -11,6 +11,7 @@ import {
   Play,
   Plus,
   RotateCcw,
+  Share2,
   Square,
   Trash2,
   Type,
@@ -26,6 +27,19 @@ const MULT_MAX = 1.6;
 const RESALTE = ["bg-[#54A6D8]/40"]; // clases de la línea que se está leyendo
 const GANANCIA_MIN = 1;
 const GANANCIA_MAX = 6;
+const GANANCIA_DEFECTO = 2;
+// Versión de la cadena de audio guardada con las preferencias: una ganancia
+// guardada para la cadena anterior (más débil) no se reutiliza.
+const VERSION_AUDIO = 2;
+const MAKEUP_DB = 8;
+const MAX_TOMA_S = 180;
+const TIMEOUT_AUDIO_MS = 2000;
+// Si el recorder no emite onstop tras detenerse, se arma la toma igual.
+const TIMEOUT_ONSTOP_MS = 5000;
+const MENSAJE_AUDIO =
+  "El navegador no activó el audio, así que no se grabó. Toca Reintentar y vuelve a tocar Grabar.";
+const MENSAJE_TIMEOUT_CAMARA =
+  "La cámara no respondió en 10 segundos. Revisa el permiso del sitio, cierra otras apps que usen la cámara y reintenta.";
 const ASPECTO_DEFECTO = 16 / 9; // hasta que el video informa su tamaño real
 const MAX_TOMAS = 5;
 const LIMITE_DURACION_S = 18;
@@ -55,8 +69,14 @@ const MENSAJE_TIMEOUT_PERMISO =
 type Dispositivo = { id: string; label: string };
 type Fase = "preparar" | "grabar";
 type Modo = "completa" | "gancho";
-type Archivo = { url: string; ext: string };
-type Grabador = { recorder: MediaRecorder; fin: Promise<Archivo> };
+type Archivo = { url: string; ext: string; blob: Blob; mimeType: string };
+type Grabador = {
+  recorder: MediaRecorder;
+  // Tipo pedido al construirlo (puede diferir de recorder.mimeType).
+  pedido: string;
+  detener: () => void;
+  fin: Promise<Archivo>;
+};
 type Orientacion = "vertical" | "horizontal";
 // De dónde sale el video de la toma: canvas 9:16, cámara directa, o cámara
 // directa porque el canvas falló.
@@ -70,6 +90,7 @@ type Toma = Archivo & {
   orientacion: Orientacion;
   origen: Origen;
   camara: string; // resolución cruda de la cámara al grabar ("" si no se leyó)
+  creada: Date;
 };
 type Sesion = {
   principal: Grabador;
@@ -82,14 +103,20 @@ type Sesion = {
   camara: string;
 };
 
-function elegirMimeType(): string {
+// `fallidos`: tipos que isTypeSupported aceptó pero cuyo recorder falló.
+function elegirMimeType(fallidos: ReadonlySet<string>): string {
   if (typeof MediaRecorder === "undefined") return "";
   const candidatos = [
+    "video/mp4;codecs=avc1,mp4a.40.2",
     "video/mp4",
     "video/webm;codecs=vp9,opus",
     "video/webm",
   ];
-  return candidatos.find((t) => MediaRecorder.isTypeSupported(t)) ?? "";
+  return (
+    candidatos.find(
+      (t) => !fallidos.has(t) && MediaRecorder.isTypeSupported(t)
+    ) ?? ""
+  );
 }
 
 // Sin procesamiento del navegador por defecto: el AGC/supresión de ruido
@@ -115,30 +142,73 @@ type CadenaAudio = {
   destino: MediaStreamAudioDestinationNode;
 };
 
-// micrófono → ganancia → compresor (limitador suave) → destino.
-// El analizador cuelga después del compresor: mide lo mismo que se graba.
+// micrófono → pasa-altos 80 Hz → ganancia (mono) → compresor → makeup →
+// limitador → misma señal a los canales izquierdo y derecho del destino.
+// El analizador cuelga después del limitador: mide lo mismo que se graba.
 function crearCadenaAudio(pista: MediaStream, ganancia: number): CadenaAudio {
   const ctx = new AudioContext();
+
+  // En los filtros pasa-altos de Web Audio, Q se expresa en dB: −3 da la
+  // respuesta plana (sin realce junto al corte).
+  const pasaAltos = ctx.createBiquadFilter();
+  pasaAltos.type = "highpass";
+  pasaAltos.frequency.value = 80;
+  pasaAltos.Q.value = -3;
+
   const gain = ctx.createGain();
+  gain.channelCount = 1;
+  gain.channelCountMode = "explicit";
+  gain.channelInterpretation = "speakers";
   gain.gain.value = ganancia;
 
+  // Ojo: DynamicsCompressorNode aplica además su propia compensación de
+  // nivel, que depende de threshold, knee y ratio.
+  const compresor = ctx.createDynamicsCompressor();
+  compresor.threshold.value = -24;
+  compresor.knee.value = 6;
+  compresor.ratio.value = 4;
+  compresor.attack.value = 0.005;
+  compresor.release.value = 0.2;
+
+  const makeup = ctx.createGain();
+  makeup.gain.value = 10 ** (MAKEUP_DB / 20);
+
   const limitador = ctx.createDynamicsCompressor();
-  limitador.threshold.value = -6;
-  limitador.knee.value = 6;
-  limitador.ratio.value = 12;
-  limitador.attack.value = 0.003;
-  limitador.release.value = 0.25;
+  limitador.threshold.value = -2;
+  limitador.knee.value = 0;
+  limitador.ratio.value = 20;
+  limitador.attack.value = 0.001;
+  limitador.release.value = 0.1;
 
   const analyser = ctx.createAnalyser();
   analyser.fftSize = 1024;
+  const union = ctx.createChannelMerger(2);
   const destino = ctx.createMediaStreamDestination();
+  destino.channelCount = 2;
 
-  ctx.createMediaStreamSource(pista).connect(gain);
-  gain.connect(limitador);
+  ctx.createMediaStreamSource(pista).connect(pasaAltos);
+  pasaAltos.connect(gain);
+  gain.connect(compresor);
+  compresor.connect(makeup);
+  makeup.connect(limitador);
   limitador.connect(analyser);
-  limitador.connect(destino);
-  void ctx.resume();
+  limitador.connect(union, 0, 0);
+  limitador.connect(union, 0, 1);
+  union.connect(destino);
+  void ctx.resume().catch(() => {});
   return { ctx, gain, analyser, destino };
+}
+
+// Reanuda el AudioContext (hay que llamarla dentro de un gesto del usuario).
+// Devuelve false si no queda en "running"; resume() puede no resolver nunca
+// en iOS, de ahí el tope.
+async function reanudarAudio(ctx: AudioContext): Promise<boolean> {
+  if (ctx.state === "running") return true;
+  await Promise.race([
+    ctx.resume().catch(() => {}),
+    new Promise((r) => setTimeout(r, TIMEOUT_AUDIO_MS)),
+  ]);
+  return (ctx.state as string) === "running";
 }
 
 function mensajeErrorMedia(err: unknown): string {
@@ -166,8 +236,7 @@ function mensajeErrorMedia(err: unknown): string {
   }
 }
 
-function nombreArchivo(ext: string, sufijo?: string): string {
-  const d = new Date();
+function nombreArchivo(d: Date, ext: string, sufijo?: string): string {
   const p = (n: number) => String(n).padStart(2, "0");
   return `grabacion-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${sufijo ? `-${sufijo}` : ""}.${ext}`;
 }
@@ -346,13 +415,15 @@ function dibujarRecorte(
 }
 
 // Pide la cámara y devuelve el stream con el tamaño real del video (medido en
-// un <video>); si no se puede medir, cae a getSettings().
+// un <video>); si no se puede medir, cae a getSettings(). Si la adquisición se
+// canceló mientras tanto, no mide: quien llama suelta el stream.
 async function abrirCamara(
   video: MediaTrackConstraints,
-  audio: MediaTrackConstraints | false
+  audio: MediaTrackConstraints | false,
+  cancelado: () => boolean
 ) {
   const stream = await navigator.mediaDevices.getUserMedia({ video, audio });
-  const medido = await medirVideo(stream);
+  const medido = cancelado() ? null : await medirVideo(stream);
   const s = stream.getVideoTracks()[0]?.getSettings();
   return {
     stream,
@@ -406,9 +477,10 @@ async function abrirCamaraVertical(
   let abierto: Awaited<ReturnType<typeof abrirCamara>> | null = null;
   let indiceAbierto = -1;
   for (let i = 0; i < intentos.length; i++) {
+    if (cancelado()) return null;
     let r: Awaited<ReturnType<typeof abrirCamara>>;
     try {
-      r = await abrirCamara(intentos[i], audio);
+      r = await abrirCamara(intentos[i], audio, cancelado);
     } catch (e) {
       if (i === 0) throw e; // permiso denegado, cámara en uso, etc.
       resultados.push({ w: 0, h: 0 });
@@ -437,7 +509,8 @@ async function abrirCamaraVertical(
         mejor = i;
     });
     indiceAbierto = mejor >= 0 ? mejor : 0;
-    abierto = await abrirCamara(intentos[indiceAbierto], audio);
+    if (cancelado()) return null;
+    abierto = await abrirCamara(intentos[indiceAbierto], audio, cancelado);
     if (cancelado()) {
       soltar(abierto.stream);
       return null;
@@ -450,12 +523,12 @@ async function abrirCamaraVertical(
   };
 }
 
-function detenerRecorder(recorder: MediaRecorder) {
-  if (recorder.state !== "inactive") recorder.stop();
-}
-
 // Un MediaRecorder cuyo resultado llega como promesa de blob URL.
-function crearGrabador(stream: MediaStream, mimeType: string): Grabador {
+function crearGrabador(
+  stream: MediaStream,
+  mimeType: string,
+  alFallar: () => void
+): Grabador {
   const recorder = new MediaRecorder(stream, {
     ...(mimeType ? { mimeType } : {}),
     audioBitsPerSecond: 192000,
@@ -465,17 +538,33 @@ function crearGrabador(stream: MediaStream, mimeType: string): Grabador {
   recorder.ondataavailable = (e) => {
     if (e.data.size > 0) trozos.push(e.data);
   };
+  let cerrar = () => {};
   const fin = new Promise<Archivo>((resolve) => {
-    recorder.onstop = () => {
+    let cerrado = false;
+    cerrar = () => {
+      if (cerrado) return;
+      cerrado = true;
       const tipo = recorder.mimeType || mimeType || "video/webm";
+      const blob = new Blob(trozos, { type: tipo });
       resolve({
-        url: URL.createObjectURL(new Blob(trozos, { type: tipo })),
+        url: URL.createObjectURL(blob),
         ext: tipo.includes("mp4") ? "mp4" : "webm",
+        blob,
+        mimeType: tipo,
       });
     };
   });
+  recorder.onstop = () => cerrar();
+  recorder.onerror = () => alFallar();
   recorder.start(1000);
-  return { recorder, fin };
+  const detener = () => {
+    try {
+      if (recorder.state !== "inactive") recorder.stop();
+    } finally {
+      setTimeout(cerrar, TIMEOUT_ONSTOP_MS);
+    }
+  };
+  return { recorder, pedido: mimeType, detener, fin };
 }
 
 // Nivel RMS en dBFS de lo que hay ahora en el analizador.
@@ -588,7 +677,15 @@ export function Teleprompter() {
   const [finScroll, setFinScroll] = useState<number | null>(null);
   const [preset, setPreset] = useState<PresetId>("dinamico");
   const [procesarAudio, setProcesarAudio] = useState(false);
-  const [ganancia, setGanancia] = useState(3);
+  const [ganancia, setGanancia] = useState(GANANCIA_DEFECTO);
+  // Aviso no bloqueante (p. ej. por qué se cortó una toma).
+  const [aviso, setAviso] = useState<string | null>(null);
+  // Equipos que ahora mismo no entregan señal (track muted); solo informa.
+  const [sinSenal, setSinSenal] = useState({ video: false, audio: false });
+  // Entre detener el recorder y tener el archivo.
+  const [finalizando, setFinalizando] = useState(false);
+  // true cuando ya se leyó localStorage; antes no se escribe.
+  const [cargado, setCargado] = useState(false);
 
   const [camaras, setCamaras] = useState<Dispositivo[]>([]);
   const [microfonos, setMicrofonos] = useState<Dispositivo[]>([]);
@@ -651,7 +748,16 @@ export function Teleprompter() {
   const [tomaId, setTomaId] = useState<number | null>(null);
   const [enResultado, setEnResultado] = useState(false);
 
-  const cargadoRef = useRef(false);
+  // Número de la adquisición de cámara vigente: cambiarlo invalida la que
+  // esté en curso.
+  const adquisicionRef = useRef(0);
+  // Aperturas de "preparar" (medidor y medición) que aún no sueltan su stream.
+  const previasRef = useRef(new Set<Promise<unknown>>());
+  const detenerMedidorRef = useRef<(() => void) | null>(null);
+  const finalizandoRef = useRef(false);
+  const reanudandoRef = useRef(false);
+  const montadoRef = useRef(true);
+  const mimeFallidosRef = useRef(new Set<string>());
   const guionRef = useRef<HTMLTextAreaElement>(null);
   const resaltadoRef = useRef<HTMLDivElement>(null);
   const sesionRef = useRef<Sesion | null>(null);
@@ -787,6 +893,7 @@ export function Teleprompter() {
           cortarAlFinal?: boolean;
           desplazamiento?: number;
           preset?: string;
+          versionAudio?: number;
         };
         // eslint-disable-next-line react-hooks/set-state-in-effect
         if (typeof d.guion === "string") setGuion(d.guion);
@@ -804,7 +911,7 @@ export function Teleprompter() {
         if (typeof d.desplazamiento === "number")
           setDesplazamiento(Math.min(1, Math.max(-1, d.desplazamiento)));
         if (d.preset && d.preset in PRESETS) setPreset(d.preset as PresetId);
-        if (typeof d.ganancia === "number")
+        if (d.versionAudio === VERSION_AUDIO && typeof d.ganancia === "number")
           setGanancia(
             Math.min(GANANCIA_MAX, Math.max(GANANCIA_MIN, d.ganancia))
           );
@@ -812,11 +919,13 @@ export function Teleprompter() {
     } catch {
       // localStorage no disponible o JSON inválido: se ignora.
     }
-    cargadoRef.current = true;
+    setCargado(true);
   }, []);
 
+  // Con estado (y no un ref) este efecto recién corre en un render que ya
+  // tiene los valores leídos, también con el doble montaje de Strict Mode.
   useEffect(() => {
-    if (!cargadoRef.current) return;
+    if (!cargado) return;
     try {
       localStorage.setItem(
         STORAGE_KEY,
@@ -830,12 +939,14 @@ export function Teleprompter() {
           cortarAlFinal,
           desplazamiento,
           preset,
+          versionAudio: VERSION_AUDIO,
         })
       );
     } catch {
       // Sin persistencia: no es crítico.
     }
   }, [
+    cargado,
     guion,
     tamano,
     mult,
@@ -858,10 +969,94 @@ export function Teleprompter() {
     const cadena = cadenaRef.current;
     cadenaRef.current = null;
     if (cadena) {
+      cadena.ctx.onstatechange = null;
       cadena.destino.stream.getTracks().forEach((t) => t.stop());
       void cadena.ctx.close();
     }
   }, []);
+
+  const invalidarAdquisicion = useCallback(() => {
+    adquisicionRef.current++;
+  }, []);
+
+  const cancelarConteo = useCallback(() => {
+    if (conteoTimerRef.current) clearInterval(conteoTimerRef.current);
+    conteoTimerRef.current = null;
+    setConteo(null);
+  }, []);
+
+  // Cierra el recorder y arma la toma cuando el blob está listo. Sirve para
+  // el corte manual, el automático y las interrupciones; el tiempo muerto
+  // final es el que hay entre la última voz y este momento.
+  const terminarGrabacion = useCallback(() => {
+    const s = sesionRef.current;
+    if (!s) return;
+    sesionRef.current = null;
+    finalizandoRef.current = true;
+    setFinalizando(true);
+    setGrabando(false);
+    setScrolling(false);
+    setFinScroll(null);
+    const adquisicion = adquisicionRef.current;
+    const ahora = performance.now();
+    const duracion = Math.round((ahora - s.inicio) / 1000);
+    const muertoFinalMs =
+      s.ultimaVoz !== null ? Math.round(ahora - s.ultimaVoz) : null;
+    s.principal.detener();
+    void s.principal.fin.then((archivo) => {
+      finalizandoRef.current = false;
+      if (!montadoRef.current) {
+        URL.revokeObjectURL(archivo.url);
+        return;
+      }
+      setFinalizando(false);
+      // Solo se suelta la cámara si no empezó otra adquisición ni otra toma.
+      const sigueVigente =
+        adquisicionRef.current === adquisicion && sesionRef.current === null;
+      if (archivo.blob.size === 0) {
+        URL.revokeObjectURL(archivo.url);
+        if (sigueVigente) {
+          detenerStream();
+          setListo(false);
+          setErrorGrabar("La toma quedó vacía: no se grabó nada.");
+        }
+        return;
+      }
+      const id = siguienteTomaRef.current++;
+      const toma: Toma = {
+        ...archivo,
+        id,
+        modo: s.modo,
+        segundos: duracion,
+        muertoMs: s.muertoMs,
+        muertoFinalMs,
+        orientacion: s.orientacion,
+        origen: s.origen,
+        camara: s.camara,
+        creada: new Date(),
+      };
+      setTomas((prev) => [...prev, toma]);
+      setTomaId(id);
+      setEnResultado(true);
+      if (sigueVigente) detenerStream();
+    });
+  }, [detenerStream]);
+
+  // Algo externo impide seguir: cancela la cuenta regresiva o termina la toma
+  // en curso (conservando lo grabado) y avisa. Sin toma ni cuenta, no hace nada.
+  const interrumpir = useCallback(
+    (motivo: string) => {
+      const habiaConteo = conteoTimerRef.current !== null;
+      if (habiaConteo) cancelarConteo();
+      if (sesionRef.current) {
+        setAviso(`La toma se detuvo: ${motivo}`);
+        terminarGrabacion();
+      } else if (habiaConteo) {
+        setAviso(`Se canceló la cuenta regresiva: ${motivo}`);
+      }
+    },
+    [cancelarConteo, terminarGrabacion]
+  );
 
   const enumerar = useCallback(async () => {
     try {
@@ -956,8 +1151,21 @@ export function Teleprompter() {
     let stream: MediaStream | null = null;
     let cadena: CadenaAudio | null = null;
     let raf = 0;
+    const detener = () => {
+      cancelado = true;
+      cancelAnimationFrame(raf);
+      stream?.getTracks().forEach((t) => t.stop());
+      if (cadena) {
+        if (cadenaRef.current === cadena) cadenaRef.current = null;
+        cadena.destino.stream.getTracks().forEach((t) => t.stop());
+        void cadena.ctx.close();
+        cadena = null;
+      }
+    };
+    detenerMedidorRef.current = detener;
+    const previas = previasRef.current;
 
-    (async () => {
+    const tarea = (async () => {
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           audio: restriccionesAudio(microfonoId, procesarAudio),
@@ -993,15 +1201,13 @@ export function Teleprompter() {
         if (!cancelado) setErrorPrep(mensajeErrorMedia(err));
       }
     })();
+    previas.add(tarea);
+    void tarea.finally(() => previas.delete(tarea));
 
     return () => {
-      cancelado = true;
-      cancelAnimationFrame(raf);
-      stream?.getTracks().forEach((t) => t.stop());
-      if (cadena) {
-        if (cadenaRef.current === cadena) cadenaRef.current = null;
-        void cadena.ctx.close();
-      }
+      detener();
+      if (detenerMedidorRef.current === detener)
+        detenerMedidorRef.current = null;
     };
   }, [fase, hayMicrofonos, microfonoId, procesarAudio]);
 
@@ -1015,16 +1221,24 @@ export function Teleprompter() {
     if (fase !== "preparar" || !hayCamaras) return;
     if (!navigator.mediaDevices?.getUserMedia) return;
     let cancelado = false;
+    let vencido = false;
     let stream: MediaStream | null = null;
+    const previas = previasRef.current;
+    // Sin tope, una cámara que no responde dejaría "Iniciar" bloqueado.
+    const timer = setTimeout(() => {
+      vencido = true;
+      previas.delete(tarea);
+      setMidiendo(false);
+    }, TIMEOUT_PERMISO_MS);
 
-    (async () => {
+    const tarea = (async () => {
       setMidiendo(true);
       orientacionAbiertaRef.current = orientacionActual();
       try {
         const abierta = await abrirCamaraVertical(
           camaraId,
           false,
-          () => cancelado
+          () => cancelado || vencido
         );
         stream = abierta?.stream ?? null;
         if (abierta && !cancelado)
@@ -1034,14 +1248,18 @@ export function Teleprompter() {
       } catch {
         // Sin lectura: no es crítico (el error real sale al grabar).
       } finally {
+        clearTimeout(timer);
         stream?.getTracks().forEach((t) => t.stop());
         stream = null;
         if (!cancelado) setMidiendo(false);
       }
     })();
+    previas.add(tarea);
+    void tarea.finally(() => previas.delete(tarea));
 
     return () => {
       cancelado = true;
+      clearTimeout(timer);
       stream?.getTracks().forEach((t) => t.stop());
     };
   }, [fase, hayCamaras, camaraId, medirTick]);
@@ -1049,7 +1267,10 @@ export function Teleprompter() {
   // Adquiere el stream al entrar a la fase de grabación (o al reintentar).
   useEffect(() => {
     if (fase !== "grabar") return;
-    let cancelado = false;
+    const id = ++adquisicionRef.current;
+    // Deja de estar vigente al salir, reintentar, desmontar o vencer el tope.
+    const vigente = () => adquisicionRef.current === id;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
     (async () => {
       if (!navigator.mediaDevices?.getUserMedia) {
@@ -1058,36 +1279,80 @@ export function Teleprompter() {
         );
         return;
       }
+      timer = setTimeout(() => {
+        if (!vigente()) return;
+        invalidarAdquisicion();
+        // Para que el reintento no espere a una apertura que no responde.
+        previasRef.current.clear();
+        setErrorGrabar(MENSAJE_TIMEOUT_CAMARA);
+      }, TIMEOUT_PERMISO_MS);
       try {
+        // El medidor y la medición de "preparar" sueltan el equipo primero.
+        detenerMedidorRef.current?.();
+        await Promise.allSettled([...previasRef.current]);
+        if (!vigente()) return;
         orientacionAbiertaRef.current = orientacionActual();
         const abierta = await abrirCamaraVertical(
           camaraId,
           restriccionesAudio(microfonoId, procesarAudio),
-          () => cancelado
+          () => !vigente()
         );
         if (!abierta) return;
         const stream = abierta.stream;
-        if (cancelado) {
+        if (!vigente()) {
           stream.getTracks().forEach((t) => t.stop());
           return;
         }
+        clearTimeout(timer);
         setLectura(leerCamara(stream, abierta.video, abierta.intentos));
         streamRef.current = stream;
-        cadenaRef.current = crearCadenaAudio(
+        const cadena = crearCadenaAudio(
           new MediaStream(stream.getAudioTracks()),
           gananciaRef.current
         );
+        cadenaRef.current = cadena;
+        cadena.ctx.onstatechange = () => {
+          const estado = cadena.ctx.state as string;
+          if (estado === "interrupted" || estado === "suspended")
+            interrumpir("el sistema interrumpió el audio.");
+        };
+        stream.getTracks().forEach((t) => {
+          const equipo = t.kind === "video" ? "la cámara" : "el micrófono";
+          const tipo = t.kind === "video" ? "video" : "audio";
+          // Un mute puede ser momentáneo: se avisa sin cortar la toma.
+          const marcar = (mudo: boolean) => {
+            if (vigente()) setSinSenal((prev) => ({ ...prev, [tipo]: mudo }));
+          };
+          t.onmute = () => marcar(true);
+          t.onunmute = () => marcar(false);
+          marcar(t.muted);
+          t.onended = () => {
+            if (!vigente() || finalizandoRef.current) return;
+            if (sesionRef.current) {
+              interrumpir(`se desconectó ${equipo}.`);
+              return;
+            }
+            cancelarConteo();
+            setListo(false);
+            setErrorGrabar(`Se desconectó ${equipo}.`);
+          };
+        });
         if (videoRef.current) videoRef.current.srcObject = stream;
         setListo(true);
       } catch (err) {
-        if (!cancelado) setErrorGrabar(mensajeErrorMedia(err));
+        if (vigente()) {
+          clearTimeout(timer);
+          setErrorGrabar(mensajeErrorMedia(err));
+        }
       }
     })();
 
     return () => {
-      cancelado = true;
+      invalidarAdquisicion();
+      clearTimeout(timer);
       detenerStream();
       setListo(false);
+      setSinSenal({ video: false, audio: false });
       // Cada adquisición vuelve a medir el video y a intentar el canvas.
       setCamaraDim(null);
       setCanvasFallo(false);
@@ -1096,7 +1361,48 @@ export function Teleprompter() {
     };
     // camaraId/microfonoId se fijan al iniciar; no deben re-adquirir el stream.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fase, intento, detenerStream]);
+  }, [
+    fase,
+    intento,
+    detenerStream,
+    interrumpir,
+    cancelarConteo,
+    invalidarAdquisicion,
+  ]);
+
+  // Al ocultarse la página (otra app, bloqueo) se cierra la toma limpiamente.
+  useEffect(() => {
+    const alOcultar = () => {
+      if (document.hidden) interrumpir("la página quedó oculta.");
+    };
+    document.addEventListener("visibilitychange", alOcultar);
+    return () => document.removeEventListener("visibilitychange", alOcultar);
+  }, [interrumpir]);
+
+  // Tope de duración por toma.
+  useEffect(() => {
+    if (!grabando) return;
+    const id = setTimeout(
+      () =>
+        interrumpir(
+          `se alcanzó el máximo de ${MAX_TOMA_S / 60} minutos por toma.`
+        ),
+      MAX_TOMA_S * 1000
+    );
+    return () => clearTimeout(id);
+  }, [grabando, interrumpir]);
+
+  // Aviso del navegador antes de recargar o cerrar con material sin guardar.
+  const hayPendiente = tomas.length > 0 || grabando || finalizando;
+  useEffect(() => {
+    if (!hayPendiente) return;
+    const avisar = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", avisar);
+    return () => window.removeEventListener("beforeunload", avisar);
+  }, [hayPendiente]);
 
   // Lectura en vivo para el chip de diagnóstico: getSettings() del track y
   // videoWidth/videoHeight actuales cada 500 ms y en cada resize del video u
@@ -1146,7 +1452,8 @@ export function Teleprompter() {
   useEffect(() => {
     if (enResultado) return;
     const alCambiar = () => {
-      if (sesionRef.current || conteo !== null) return;
+      if (sesionRef.current || finalizandoRef.current || conteo !== null)
+        return;
       if (orientacionActual() === orientacionAbiertaRef.current) return;
       if (fase === "grabar") setIntento((n) => n + 1);
       else setMedirTick((n) => n + 1);
@@ -1315,12 +1622,31 @@ export function Teleprompter() {
     };
   }, [grabando]);
 
+  const reiniciarPosicion = useCallback(() => {
+    posRef.current = 0;
+    activoRef.current = 0;
+    setBloqueActivo(0);
+    setFinScroll(null);
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    calcularActivo();
+  }, [calcularActivo]);
+
   // Arranque: el recorder y el scroll se disparan en el mismo handler (un
   // solo batch de React), sin pausa entre el clic/cuenta y el guion.
   const empezarGrabacion = useCallback(() => {
     const cadena = cadenaRef.current;
     const directo = streamRef.current;
     if (!directo || !cadena) return;
+    if (cadena.ctx.state !== "running") {
+      setErrorGrabar(MENSAJE_AUDIO);
+      return;
+    }
+    if (directo.getTracks().some((t) => t.readyState !== "live")) {
+      setErrorGrabar(
+        "La cámara o el micrófono se desconectaron. Toca Reintentar."
+      );
+      return;
+    }
     // Con el canvas vigente siempre se graba de su captureStream; si aún no
     // existe no se cae en silencio al stream directo.
     if (canvasEsperadoRef.current && !canvasStreamRef.current) return;
@@ -1337,12 +1663,18 @@ export function Teleprompter() {
         cadena
       );
       if (!paraGrabar) continue;
+      const mimeType = elegirMimeType(mimeFallidosRef.current);
       try {
-        principal = crearGrabador(paraGrabar, elegirMimeType());
+        principal = crearGrabador(paraGrabar, mimeType, () => {
+          // La próxima toma prueba el siguiente formato de la lista.
+          if (mimeType) mimeFallidosRef.current.add(mimeType);
+          interrumpir("el grabador del navegador falló.");
+        });
         fuente = f;
         break;
       } catch {
         // Se prueba la siguiente fuente.
+        if (f === "directo" && mimeType) mimeFallidosRef.current.add(mimeType);
       }
     }
     if (!principal) {
@@ -1361,6 +1693,14 @@ export function Teleprompter() {
         : canvasFalloRef.current
           ? "directo-fallo"
           : "directo";
+    // El guion parte siempre desde el inicio (en modo gancho, el del gancho).
+    reiniciarPosicion();
+    const grabador = principal;
+    // Si el recorder se detiene solo, se arma la toma igual.
+    grabador.recorder.addEventListener("stop", () => {
+      if (sesionRef.current?.principal === grabador)
+        interrumpir("el grabador se detuvo.");
+    });
     sesionRef.current = {
       principal,
       inicio: performance.now(),
@@ -1377,42 +1717,7 @@ export function Teleprompter() {
     setFinScroll(null);
     setGrabando(true);
     setScrolling(true);
-  }, [modo]);
-
-  // Cierra el recorder y arma la toma cuando el blob está listo. Sirve para
-  // el corte manual y para el automático; el tiempo muerto final es el que
-  // hay entre la última voz y este momento.
-  const terminarGrabacion = useCallback(() => {
-    const s = sesionRef.current;
-    if (!s) return;
-    sesionRef.current = null;
-    setGrabando(false);
-    setScrolling(false);
-    setFinScroll(null);
-    detenerRecorder(s.principal.recorder);
-    const ahora = performance.now();
-    const duracion = Math.round((ahora - s.inicio) / 1000);
-    const muertoFinalMs =
-      s.ultimaVoz !== null ? Math.round(ahora - s.ultimaVoz) : null;
-    void s.principal.fin.then((archivo) => {
-      const id = siguienteTomaRef.current++;
-      const toma: Toma = {
-        ...archivo,
-        id,
-        modo: s.modo,
-        segundos: duracion,
-        muertoMs: s.muertoMs,
-        muertoFinalMs,
-        orientacion: s.orientacion,
-        origen: s.origen,
-        camara: s.camara,
-      };
-      setTomas((prev) => [...prev, toma]);
-      setTomaId(id);
-      setEnResultado(true);
-      detenerStream();
-    });
-  }, [detenerStream]);
+  }, [modo, interrumpir, reiniciarPosicion]);
 
   // Corte al terminar el guion: con el scroll en el final se vigila la voz
   // (la última voz la anota el seguimiento de arriba) y se corta tras
@@ -1442,15 +1747,26 @@ export function Teleprompter() {
     setScrolling((s) => !s);
   }, []);
 
-  function alternarGrabacion() {
+  async function alternarGrabacion() {
     if (grabando) {
       terminarGrabacion();
       return;
     }
     if (conteo !== null) {
-      // Cancelar cuenta regresiva.
-      if (conteoTimerRef.current) clearInterval(conteoTimerRef.current);
-      setConteo(null);
+      cancelarConteo();
+      return;
+    }
+    const cadena = cadenaRef.current;
+    if (!cadena || finalizandoRef.current || reanudandoRef.current) return;
+    setAviso(null);
+    // El audio se reanuda aquí, dentro del gesto del usuario (iOS lo exige).
+    const adquisicion = adquisicionRef.current;
+    reanudandoRef.current = true;
+    const audioActivo = await reanudarAudio(cadena.ctx);
+    reanudandoRef.current = false;
+    if (adquisicionRef.current !== adquisicion || document.hidden) return;
+    if (!audioActivo) {
+      setErrorGrabar(MENSAJE_AUDIO);
       return;
     }
     if (cuentaSeg === 0) {
@@ -1462,8 +1778,7 @@ export function Teleprompter() {
     conteoTimerRef.current = setInterval(() => {
       n -= 1;
       if (n <= 0) {
-        if (conteoTimerRef.current) clearInterval(conteoTimerRef.current);
-        setConteo(null);
+        cancelarConteo();
         empezarGrabacion();
       } else {
         setConteo(n);
@@ -1471,21 +1786,12 @@ export function Teleprompter() {
     }, 1000);
   }
 
-  function reiniciarPosicion() {
-    posRef.current = 0;
-    activoRef.current = 0;
-    setBloqueActivo(0);
-    setFinScroll(null);
-    if (scrollRef.current) scrollRef.current.scrollTop = 0;
-    calcularActivo();
-  }
-
   // Corta la sesión en curso sin crear toma y libera sus blobs.
   const descartarSesion = useCallback(() => {
     const s = sesionRef.current;
     sesionRef.current = null;
     if (!s) return;
-    detenerRecorder(s.principal.recorder);
+    s.principal.detener();
     void s.principal.fin.then((a) => URL.revokeObjectURL(a.url));
   }, []);
 
@@ -1494,13 +1800,21 @@ export function Teleprompter() {
   }
 
   function limpiarEstadoGrabacion() {
-    if (conteoTimerRef.current) clearInterval(conteoTimerRef.current);
+    // Invalida la apertura de cámara en curso: lo que llegue tarde se detiene.
+    adquisicionRef.current++;
+    cancelarConteo();
     descartarSesion();
     detenerStream();
-    setConteo(null);
+    setListo(false);
     setGrabando(false);
     setScrolling(false);
     setErrorGrabar(null);
+    setAviso(null);
+  }
+
+  function reintentar() {
+    limpiarEstadoGrabacion();
+    setIntento((n) => n + 1);
   }
 
   // Salir de la pantalla de grabación: con tomas en memoria vuelve a
@@ -1533,6 +1847,7 @@ export function Teleprompter() {
   function descartarToma(id: number) {
     const t = tomas.find((x) => x.id === id);
     if (!t) return;
+    if (!window.confirm("¿Descartar esta toma? No se puede recuperar.")) return;
     liberarToma(t);
     const quedan = tomas.filter((x) => x.id !== id);
     setTomas(quedan);
@@ -1553,9 +1868,19 @@ export function Teleprompter() {
     setEnResultado(false);
     setSegundos(0);
     setErrorGrabar(null);
+    setAviso(null);
+    setListo(false);
     setScrolling(false);
     reiniciarPosicion();
     setIntento((n) => n + 1);
+  }
+
+  // Hoja de compartir del sistema (en iOS permite "Guardar video").
+  function compartir(archivo: File) {
+    navigator.share({ files: [archivo] }).catch((err: unknown) => {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      setAviso("No se pudo compartir; usa Descargar toma.");
+    });
   }
 
   // El guion se persiste en un efecto sobre [guion], así que vaciarlo acá
@@ -1577,8 +1902,11 @@ export function Teleprompter() {
 
   // Liberar todo al salir de la pantalla.
   useEffect(() => {
+    montadoRef.current = true;
     return () => {
+      montadoRef.current = false;
       if (conteoTimerRef.current) clearInterval(conteoTimerRef.current);
+      conteoTimerRef.current = null;
       descartarSesion();
       tomasRef.current.forEach((t) => URL.revokeObjectURL(t.url));
       detenerStream();
@@ -1930,10 +2258,10 @@ export function Teleprompter() {
           <button
             type="button"
             onClick={iniciar}
-            disabled={!guion.trim()}
+            disabled={!guion.trim() || midiendo}
             className="mt-auto rounded-xl bg-[#54A6D8] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#4394c4] disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Iniciar
+            {midiendo ? "Midiendo la cámara..." : "Iniciar"}
           </button>
         </section>
       </div>
@@ -1964,6 +2292,22 @@ export function Teleprompter() {
 
   const tomaSel = tomas.find((t) => t.id === tomaId) ?? tomas[tomas.length - 1];
   const tomasLlenas = tomas.length >= MAX_TOMAS;
+  const nombreToma = tomaSel
+    ? nombreArchivo(
+        tomaSel.creada,
+        tomaSel.ext,
+        `toma-${tomas.indexOf(tomaSel) + 1}${tomaSel.modo === "gancho" ? "-gancho" : ""}`
+      )
+    : "";
+  // Archivo para la hoja de compartir; null si el navegador no la admite. El
+  // tipo va sin ";codecs=...", que algunos navegadores rechazan al compartir.
+  let archivoCompartible: File | null = null;
+  if (enResultado && tomaSel && typeof navigator.canShare === "function") {
+    const file = new File([tomaSel.blob], nombreToma, {
+      type: tomaSel.mimeType.split(";")[0],
+    });
+    if (navigator.canShare({ files: [file] })) archivoCompartible = file;
+  }
   const botonPrimario =
     "flex h-11 items-center gap-2 rounded-xl bg-[#54A6D8] px-5 text-sm font-semibold text-white hover:bg-[#4394c4]";
 
@@ -2033,14 +2377,33 @@ export function Teleprompter() {
                 : "cámara directa (falló el canvas)"}{" "}
             · Cámara: {tomaSel.camara || "—"}
           </p>
+          <p className="max-w-full break-all text-center text-xs text-white/70">
+            Archivo: {tomaSel.mimeType}
+          </p>
+
+          {aviso && (
+            <p
+              role="alert"
+              className="max-w-md rounded-lg bg-amber-500/90 px-3 py-1.5 text-center text-xs font-medium text-black"
+            >
+              {aviso}
+            </p>
+          )}
 
           <div className="flex flex-wrap justify-center gap-3">
+            {archivoCompartible && (
+              <button
+                type="button"
+                onClick={() => compartir(archivoCompartible)}
+                className={botonPrimario}
+              >
+                <Share2 className="h-4 w-4" />
+                Compartir / Guardar
+              </button>
+            )}
             <a
               href={tomaSel.url}
-              download={nombreArchivo(
-                tomaSel.ext,
-                `toma-${tomas.indexOf(tomaSel) + 1}${tomaSel.modo === "gancho" ? "-gancho" : ""}`
-              )}
+              download={nombreToma}
               className={botonPrimario}
             >
               <Download className="h-4 w-4" />
@@ -2166,7 +2529,7 @@ export function Teleprompter() {
           {grabando && (
             <div className="absolute right-4 top-[40%] flex items-center gap-2 rounded-full bg-black/60 px-3 py-1 text-sm font-semibold">
               <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-red-500" />
-              REC {formatoTiempo(segundos)} ·{" "}
+              REC {formatoTiempo(segundos)} / {formatoTiempo(MAX_TOMA_S)} ·{" "}
               {etiquetaBloque(bloqueActivo, bloquesGrab.length)}
             </div>
           )}
@@ -2203,14 +2566,39 @@ export function Teleprompter() {
             </div>
           )}
 
+          {(aviso || finalizando) && (
+            <p
+              role="status"
+              className="absolute inset-x-2 bottom-[44%] rounded-lg bg-amber-500/90 px-3 py-1.5 text-center text-xs font-medium text-black"
+            >
+              {finalizando ? "Finalizando la toma..." : aviso}
+            </p>
+          )}
+
+          {(sinSenal.video || sinSenal.audio) && (
+            <div
+              role="status"
+              className="pointer-events-none absolute inset-x-2 bottom-[52%] rounded-lg bg-amber-500/90 px-3 py-1.5 text-center text-xs font-medium text-black"
+            >
+              {sinSenal.video && <p>La cámara dejó de entregar señal.</p>}
+              {sinSenal.audio && <p>El micrófono dejó de entregar señal.</p>}
+            </div>
+          )}
+
           {errorGrabar && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/80 p-6 text-center">
               <p role="alert" className="max-w-md text-base">
                 {errorGrabar}
               </p>
-              <button type="button" onClick={salir} className={botonCtrl}>
-                Volver
-              </button>
+              <div className="flex gap-3">
+                <button type="button" onClick={reintentar} className={botonCtrl}>
+                  <RotateCcw className="h-4 w-4" />
+                  Reintentar
+                </button>
+                <button type="button" onClick={salir} className={botonCtrl}>
+                  Volver
+                </button>
+              </div>
             </div>
           )}
           </div>
@@ -2220,7 +2608,11 @@ export function Teleprompter() {
               type="button"
               onClick={alternarGrabacion}
               disabled={
-                !listo || camaraDim === null || (!grabando && tomasLlenas)
+                !listo ||
+                camaraDim === null ||
+                finalizando ||
+                errorGrabar !== null ||
+                (!grabando && tomasLlenas)
               }
               className={`flex h-11 items-center gap-2 rounded-xl px-5 text-sm font-semibold text-white transition disabled:opacity-50 ${
                 grabando ? "bg-red-600 hover:bg-red-700" : "bg-[#54A6D8] hover:bg-[#4394c4]"
@@ -2328,7 +2720,7 @@ export function Teleprompter() {
             <button
               type="button"
               onClick={salir}
-              disabled={grabando}
+              disabled={grabando || finalizando}
               className={`${botonCtrl} disabled:opacity-50`}
             >
               <X className="h-4 w-4" />
