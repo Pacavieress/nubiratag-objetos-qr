@@ -31,7 +31,7 @@ const GANANCIA_DEFECTO = 2;
 // Versión de la cadena de audio guardada con las preferencias: una ganancia
 // guardada para la cadena anterior (más débil) no se reutiliza.
 const VERSION_AUDIO = 2;
-const MAKEUP_DB = 8;
+const MAKEUP_DB = 11;
 const MAX_TOMA_S = 180;
 const TIMEOUT_AUDIO_MS = 2000;
 // Si el recorder no emite onstop tras detenerse, se arma la toma igual.
@@ -43,9 +43,20 @@ const MENSAJE_TIMEOUT_CAMARA =
 const ASPECTO_DEFECTO = 16 / 9; // hasta que el video informa su tamaño real
 const MAX_TOMAS = 5;
 const LIMITE_DURACION_S = 18;
-// Umbral de "ya hay voz" para medir el tiempo muerto inicial (dBFS, después
-// de ganancia y limitador).
-const UMBRAL_VOZ_DB = -40;
+// Umbral de "ya hay voz" (dBFS, después de ganancia y limitador): se adapta al
+// ruido medido antes de cada toma; este es el valor si no hay medición.
+const UMBRAL_VOZ_DB = -30;
+const UMBRAL_MIN_DB = -40;
+const UMBRAL_MAX_DB = -22;
+const MARGEN_RUIDO_DB = 6;
+const PERCENTIL_RUIDO = 0.2;
+const INTERVALO_NIVEL_MS = 20;
+// Sin cuenta regresiva, el ruido se mide al comienzo de la toma.
+const MEDICION_RUIDO_MS = 500;
+// Con menos ventanas que estas no se considera una medición.
+const MIN_VENTANAS_RUIDO = 10;
+// Por debajo es silencio digital (el audio aún no llega), no ruido ambiente.
+const SIN_SENAL_DB = -100;
 // Corte automático al terminar el guion: silencio continuo necesario y tope
 // de espera, ambos contados desde que el scroll llega al final.
 const SILENCIO_CORTE_MS = 600;
@@ -91,12 +102,21 @@ type Toma = Archivo & {
   origen: Origen;
   camara: string; // resolución cruda de la cámara al grabar ("" si no se leyó)
   creada: Date;
+  ruidoDb: number | null; // null = sin medición
+  umbralDb: number;
 };
+// Piso de ruido medido y umbral de voz que sale de él.
+type Calibracion = { ruidoDb: number | null; umbralDb: number };
+// Nivel de una ventana del analizador y cuándo se leyó (performance.now()).
+type Ventana = { t: number; db: number };
 type Sesion = {
   principal: Grabador;
   inicio: number;
   muertoMs: number | null;
   ultimaVoz: number | null; // performance.now() de la última voz detectada
+  // null mientras se mide el ruido dentro de la toma (sin cuenta regresiva).
+  calibracion: Calibracion | null;
+  pendientes: Ventana[]; // ventanas a evaluar cuando haya umbral
   modo: Modo;
   orientacion: Orientacion;
   origen: Origen;
@@ -578,6 +598,55 @@ function nivelDb(analyser: AnalyserNode, datos: Uint8Array<ArrayBuffer>) {
   return 20 * Math.log10(Math.max(Math.sqrt(suma / datos.length), 1e-6));
 }
 
+// Lee el nivel cada INTERVALO_NIVEL_MS. Devuelve cómo dejar de leer.
+function muestrearNivel(
+  analyser: AnalyserNode,
+  alLeer: (db: number) => void
+): () => void {
+  const datos = new Uint8Array(analyser.fftSize);
+  const id = setInterval(
+    () => alLeer(nivelDb(analyser, datos)),
+    INTERVALO_NIVEL_MS
+  );
+  return () => clearInterval(id);
+}
+
+// Piso de ruido = percentil 20 de las ventanas; umbral = ruido + 6 dB,
+// acotado a [UMBRAL_MIN_DB, UMBRAL_MAX_DB].
+function calibrar(niveles: number[]): Calibracion {
+  const validos = niveles
+    .filter((db) => db > SIN_SENAL_DB)
+    .sort((a, b) => a - b);
+  if (validos.length < MIN_VENTANAS_RUIDO)
+    return { ruidoDb: null, umbralDb: UMBRAL_VOZ_DB };
+  const ruidoDb = validos[Math.floor((validos.length - 1) * PERCENTIL_RUIDO)];
+  return {
+    ruidoDb,
+    umbralDb: Math.min(
+      UMBRAL_MAX_DB,
+      Math.max(UMBRAL_MIN_DB, ruidoDb + MARGEN_RUIDO_DB)
+    ),
+  };
+}
+
+// Anota la voz de una ventana: tiempo muerto inicial y última voz.
+function registrarVoz(s: Sesion, v: Ventana, umbralDb: number) {
+  if (v.db <= umbralDb) return;
+  s.ultimaVoz = v.t;
+  if (s.muertoMs === null) s.muertoMs = Math.round(v.t - s.inicio);
+}
+
+// Fija el umbral con las ventanas acumuladas en la toma y las evalúa, así lo
+// dicho durante la medición también cuenta. Si ya había umbral, no hace nada.
+function resolverCalibracion(s: Sesion): Calibracion {
+  if (s.calibracion) return s.calibracion;
+  const calibracion = calibrar(s.pendientes.map((v) => v.db));
+  s.calibracion = calibracion;
+  s.pendientes.forEach((v) => registrarVoz(s, v, calibracion.umbralDb));
+  s.pendientes = [];
+  return calibracion;
+}
+
 function formatoTiempo(seg: number): string {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${p(Math.floor(seg / 60))}:${p(seg % 60)}`;
@@ -790,6 +859,8 @@ export function Teleprompter() {
   >([]);
   const lineaActivaRef = useRef(-1);
   const conteoTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Detiene la medición de ruido de la cuenta regresiva.
+  const detenerMuestreoRef = useRef<(() => void) | null>(null);
 
   const bloques = useMemo(() => dividirBloques(guion), [guion]);
   // En "Regrabar gancho" solo se muestra y graba el primer bloque.
@@ -982,6 +1053,8 @@ export function Teleprompter() {
   const cancelarConteo = useCallback(() => {
     if (conteoTimerRef.current) clearInterval(conteoTimerRef.current);
     conteoTimerRef.current = null;
+    detenerMuestreoRef.current?.();
+    detenerMuestreoRef.current = null;
     setConteo(null);
   }, []);
 
@@ -1000,6 +1073,8 @@ export function Teleprompter() {
     const adquisicion = adquisicionRef.current;
     const ahora = performance.now();
     const duracion = Math.round((ahora - s.inicio) / 1000);
+    // Una toma cortada antes de terminar la medición se evalúa igual.
+    const { ruidoDb, umbralDb } = resolverCalibracion(s);
     const muertoFinalMs =
       s.ultimaVoz !== null ? Math.round(ahora - s.ultimaVoz) : null;
     s.principal.detener();
@@ -1034,6 +1109,8 @@ export function Teleprompter() {
         origen: s.origen,
         camara: s.camara,
         creada: new Date(),
+        ruidoDb,
+        umbralDb,
       };
       setTomas((prev) => [...prev, toma]);
       setTomaId(id);
@@ -1601,24 +1678,28 @@ export function Teleprompter() {
   // Cronómetro + seguimiento de voz. Tiempo muerto inicial: ms desde que
   // arranca el recorder hasta que el nivel supera el umbral de voz por 1ª
   // vez. También se anota la última voz, que usan el corte automático y el
-  // tiempo muerto final.
+  // tiempo muerto final. Sin umbral todavía, las ventanas se acumulan hasta
+  // completar la medición de ruido.
   useEffect(() => {
     if (!grabando) return;
     const id = setInterval(() => setSegundos((s) => s + 1), 1000);
     const analyser = cadenaRef.current?.analyser;
-    const datos = analyser ? new Uint8Array(analyser.fftSize) : null;
-    const medidor = setInterval(() => {
-      const s = sesionRef.current;
-      if (!s || !analyser || !datos) return;
-      if (nivelDb(analyser, datos) > UMBRAL_VOZ_DB) {
-        const ahora = performance.now();
-        s.ultimaVoz = ahora;
-        if (s.muertoMs === null) s.muertoMs = Math.round(ahora - s.inicio);
-      }
-    }, 20);
+    const detenerMedidor = analyser
+      ? muestrearNivel(analyser, (db) => {
+          const s = sesionRef.current;
+          if (!s) return;
+          const v = { t: performance.now(), db };
+          if (s.calibracion) {
+            registrarVoz(s, v, s.calibracion.umbralDb);
+            return;
+          }
+          s.pendientes.push(v);
+          if (v.t - s.inicio >= MEDICION_RUIDO_MS) resolverCalibracion(s);
+        })
+      : null;
     return () => {
       clearInterval(id);
-      clearInterval(medidor);
+      detenerMedidor?.();
     };
   }, [grabando]);
 
@@ -1633,7 +1714,9 @@ export function Teleprompter() {
 
   // Arranque: el recorder y el scroll se disparan en el mismo handler (un
   // solo batch de React), sin pausa entre el clic/cuenta y el guion.
-  const empezarGrabacion = useCallback(() => {
+  // `ruido`: niveles leídos en la cuenta regresiva; null si no la hubo (el
+  // ruido se mide entonces al comienzo de la toma).
+  const empezarGrabacion = useCallback((ruido: number[] | null) => {
     const cadena = cadenaRef.current;
     const directo = streamRef.current;
     if (!directo || !cadena) return;
@@ -1706,6 +1789,8 @@ export function Teleprompter() {
       inicio: performance.now(),
       muertoMs: null,
       ultimaVoz: null,
+      calibracion: ruido ? calibrar(ruido) : null,
+      pendientes: [],
       modo,
       orientacion: orientacionActual(),
       origen,
@@ -1770,16 +1855,20 @@ export function Teleprompter() {
       return;
     }
     if (cuentaSeg === 0) {
-      empezarGrabacion();
+      empezarGrabacion(null);
       return;
     }
     let n = cuentaSeg;
     setConteo(n);
+    const ruido: number[] = [];
+    detenerMuestreoRef.current = muestrearNivel(cadena.analyser, (db) =>
+      ruido.push(db)
+    );
     conteoTimerRef.current = setInterval(() => {
       n -= 1;
       if (n <= 0) {
         cancelarConteo();
-        empezarGrabacion();
+        empezarGrabacion(ruido);
       } else {
         setConteo(n);
       }
@@ -1907,6 +1996,8 @@ export function Teleprompter() {
       montadoRef.current = false;
       if (conteoTimerRef.current) clearInterval(conteoTimerRef.current);
       conteoTimerRef.current = null;
+      detenerMuestreoRef.current?.();
+      detenerMuestreoRef.current = null;
       descartarSesion();
       tomasRef.current.forEach((t) => URL.revokeObjectURL(t.url));
       detenerStream();
@@ -2378,7 +2469,11 @@ export function Teleprompter() {
             · Cámara: {tomaSel.camara || "—"}
           </p>
           <p className="max-w-full break-all text-center text-xs text-white/70">
-            Archivo: {tomaSel.mimeType}
+            Archivo: {tomaSel.mimeType} · Ruido:{" "}
+            {tomaSel.ruidoDb !== null
+              ? `${tomaSel.ruidoDb.toFixed(1)} dBFS`
+              : "sin medición"}{" "}
+            · Umbral: {tomaSel.umbralDb.toFixed(1)} dBFS
           </p>
 
           {aviso && (
