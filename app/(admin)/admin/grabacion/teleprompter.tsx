@@ -2539,209 +2539,231 @@ export function Teleprompter() {
     });
     if (navigator.canShare({ files: [file] })) procesadoCompartible = file;
   }
-  const botonPrimario =
-    "flex h-11 items-center gap-2 rounded-xl bg-[#54A6D8] px-5 text-sm font-semibold text-white hover:bg-[#4394c4]";
+  // Acciones de la pantalla de resultados: ícono arriba y etiqueta abajo.
+  const botonAccion =
+    "flex h-16 w-full min-w-0 flex-col items-center justify-center gap-1 rounded-xl px-1 text-center text-xs font-medium leading-tight text-white transition disabled:opacity-50";
+  const botonDestacado = `${botonAccion} bg-[#54A6D8] hover:bg-[#4394c4]`;
+  const botonSecundario = `${botonAccion} bg-white/15 hover:bg-white/25`;
 
   return (
     <div className="absolute inset-0 overflow-hidden overscroll-none bg-black pt-[env(safe-area-inset-top,0px)] text-white">
       {enResultado && tomaSel ? (
-        <div className="flex h-full flex-col items-center gap-4 overflow-y-auto overscroll-contain p-4">
-          <video
-            key={tomaSel.id}
-            src={tomaSel.url}
-            controls
-            playsInline
-            className="max-h-[55svh] max-w-full rounded-xl"
-            onLoadedMetadata={(e) => {
-              const { videoWidth, videoHeight } = e.currentTarget;
-              if (videoWidth > 0 && videoHeight > 0)
-                setResoluciones((prev) => ({
-                  ...prev,
-                  [tomaSel.id]: `${videoWidth}×${videoHeight}`,
-                }));
-            }}
-          />
+        <div className="relative h-full">
+          <button
+            type="button"
+            onClick={cerrarTodo}
+            aria-label="Cerrar"
+            className="absolute right-2 top-2 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-white/15 text-white transition hover:bg-white/25"
+          >
+            <X className="h-5 w-5" />
+          </button>
+          <div className="flex h-full flex-col items-center gap-2 overflow-y-auto overscroll-contain px-3 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))]">
+            {/* El video toma el alto que sobra (hasta 55svh), así la grilla de
+                acciones queda a la vista. Los márgenes laterales dejan libre el
+                botón de cerrar. */}
+            <video
+              key={tomaSel.id}
+              src={tomaSel.url}
+              controls
+              playsInline
+              className="max-h-[55svh] min-h-40 w-[calc(100%-6rem)] flex-1 basis-0 rounded-xl object-contain"
+              onLoadedMetadata={(e) => {
+                const { videoWidth, videoHeight } = e.currentTarget;
+                if (videoWidth > 0 && videoHeight > 0)
+                  setResoluciones((prev) => ({
+                    ...prev,
+                    [tomaSel.id]: `${videoWidth}×${videoHeight}`,
+                  }));
+              }}
+            />
 
-          <div className="flex flex-wrap justify-center gap-2">
-            {tomas.map((t, i) => (
-              <button
-                key={t.id}
-                type="button"
-                aria-pressed={t.id === tomaSel.id}
-                onClick={() => setTomaId(t.id)}
-                className={`h-9 rounded-full px-4 text-sm font-medium transition ${
-                  t.id === tomaSel.id
-                    ? "bg-[#54A6D8] text-white"
-                    : "bg-white/15 text-white hover:bg-white/25"
-                }`}
-              >
-                Toma {i + 1}
-                {t.modo === "gancho" ? " · gancho" : ""}
-              </button>
-            ))}
-          </div>
+            <div className="flex flex-wrap justify-center gap-1.5">
+              {tomas.map((t, i) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  aria-pressed={t.id === tomaSel.id}
+                  onClick={() => setTomaId(t.id)}
+                  className={`h-8 rounded-full px-3 text-xs font-medium transition ${
+                    t.id === tomaSel.id
+                      ? "bg-[#54A6D8] text-white"
+                      : "bg-white/15 text-white hover:bg-white/25"
+                  }`}
+                >
+                  Toma {i + 1}
+                  {t.modo === "gancho" ? " · gancho" : ""}
+                </button>
+              ))}
+            </div>
 
-          <p className="text-center text-sm text-white/80">
-            {tomaSel.segundos} s · Tiempo muerto inicial:{" "}
-            <strong className="tabular-nums">
-              {tomaSel.muertoMs !== null
-                ? `${tomaSel.muertoMs} ms`
-                : "sin voz detectada"}
-            </strong>
-            {" · "}Tiempo muerto final:{" "}
-            <strong className="tabular-nums">
-              {tomaSel.muertoFinalMs !== null
-                ? `${tomaSel.muertoFinalMs} ms`
-                : "sin voz detectada"}
-            </strong>
-          </p>
-          <p className="text-center text-xs text-white/70">
-            Grabado:{" "}
-            <strong className="tabular-nums">
-              {resoluciones[tomaSel.id] ?? "…"}
-            </strong>{" "}
-            · Dispositivo: {tomaSel.orientacion} · Formato:{" "}
-            {tomaSel.origen === "canvas"
-              ? "canvas 9:16"
-              : tomaSel.origen === "directo"
-                ? "cámara directa"
-                : "cámara directa (falló el canvas)"}{" "}
-            · Cámara: {tomaSel.camara || "—"}
-          </p>
-          <p className="max-w-full break-all text-center text-xs text-white/70">
-            Archivo: {tomaSel.mimeType} · Ruido:{" "}
-            {tomaSel.ruidoDb !== null
-              ? `${tomaSel.ruidoDb.toFixed(1)} dBFS`
-              : "sin medición"}{" "}
-            · Umbral: {tomaSel.umbralDb.toFixed(1)} dBFS
-          </p>
+            <div className="w-full max-w-md text-center text-[11px] leading-snug text-white/70">
+              <p className="text-white/80">
+                {tomaSel.segundos} s · Tiempo muerto inicial:{" "}
+                <strong className="tabular-nums">
+                  {tomaSel.muertoMs !== null
+                    ? `${tomaSel.muertoMs} ms`
+                    : "sin voz detectada"}
+                </strong>
+                {" · "}Tiempo muerto final:{" "}
+                <strong className="tabular-nums">
+                  {tomaSel.muertoFinalMs !== null
+                    ? `${tomaSel.muertoFinalMs} ms`
+                    : "sin voz detectada"}
+                </strong>
+              </p>
+              <p>
+                Grabado:{" "}
+                <strong className="tabular-nums">
+                  {resoluciones[tomaSel.id] ?? "…"}
+                </strong>{" "}
+                · Dispositivo: {tomaSel.orientacion} · Formato:{" "}
+                {tomaSel.origen === "canvas"
+                  ? "canvas 9:16"
+                  : tomaSel.origen === "directo"
+                    ? "cámara directa"
+                    : "cámara directa (falló el canvas)"}{" "}
+                · Cámara: {tomaSel.camara || "—"}
+              </p>
+              <p className="break-all">
+                Archivo: {tomaSel.mimeType} · Ruido:{" "}
+                {tomaSel.ruidoDb !== null
+                  ? `${tomaSel.ruidoDb.toFixed(1)} dBFS`
+                  : "sin medición"}{" "}
+                · Umbral: {tomaSel.umbralDb.toFixed(1)} dBFS
+              </p>
+            </div>
 
-          {aviso && (
-            <p
-              role="alert"
-              className="max-w-md rounded-lg bg-amber-500/90 px-3 py-1.5 text-center text-xs font-medium text-black"
-            >
-              {aviso}
-            </p>
-          )}
-
-          <div className="flex flex-wrap justify-center gap-3">
-            {archivoCompartible && (
-              <button
-                type="button"
-                onClick={() => compartir(archivoCompartible)}
-                className={botonPrimario}
-              >
-                <Share2 className="h-4 w-4" />
-                Compartir / Guardar
-              </button>
+            {proceso?.estado === "listo" && (
+              <p role="status" className="text-[11px] text-white/80">
+                Versión para TikTok lista
+              </p>
             )}
-            <a
-              href={tomaSel.url}
-              download={nombreToma}
-              className={botonPrimario}
-            >
-              <Download className="h-4 w-4" />
-              Descargar toma
-            </a>
-            <button
-              type="button"
-              onClick={() => regrabar("gancho")}
-              disabled={tomasLlenas}
-              className={`${botonCtrl} disabled:opacity-50`}
-            >
-              <RotateCcw className="h-4 w-4" />
-              Regrabar gancho
-            </button>
-            <button
-              type="button"
-              onClick={() => regrabar("completa")}
-              disabled={tomasLlenas}
-              className={`${botonCtrl} disabled:opacity-50`}
-            >
-              <RotateCcw className="h-4 w-4" />
-              Grabar de nuevo
-            </button>
-            <button
-              type="button"
-              onClick={() => descartarToma(tomaSel.id)}
-              className={botonCtrl}
-            >
-              <Trash2 className="h-4 w-4" />
-              Descartar
-            </button>
-            <button type="button" onClick={cerrarTodo} className={botonCtrl}>
-              <X className="h-4 w-4" />
-              Cerrar
-            </button>
-          </div>
-          {/* Versión para TikTok, procesada en el servidor. */}
-          <div className="flex w-full max-w-md flex-col items-center gap-2 border-t border-white/15 pt-3">
-            {proceso?.estado === "listo" ? (
-              <>
-                <p className="max-w-full break-all text-center text-xs text-white/70">
-                  Versión para TikTok lista: {proceso.nombre}
-                </p>
-                <div className="flex flex-wrap justify-center gap-3">
-                  {procesadoCompartible && (
-                    <button
-                      type="button"
-                      onClick={() => compartir(procesadoCompartible)}
-                      className={botonPrimario}
-                    >
-                      <Share2 className="h-4 w-4" />
-                      Compartir / Guardar
-                    </button>
-                  )}
+
+            <div className="grid w-full max-w-md shrink-0 grid-cols-3 gap-2">
+              {/* Fila 1: versión para TikTok (procesada en el servidor) y la
+                  toma original. */}
+              {proceso?.estado === "listo" ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (procesadoCompartible) compartir(procesadoCompartible);
+                    }}
+                    disabled={!procesadoCompartible}
+                    className={botonDestacado}
+                  >
+                    <Share2 className="h-5 w-5" />
+                    Compartir TikTok
+                  </button>
                   <a
                     href={proceso.url}
                     download={proceso.nombre}
-                    className={botonPrimario}
+                    className={botonDestacado}
                   >
-                    <Download className="h-4 w-4" />
+                    <Download className="h-5 w-5" />
+                    Descargar TikTok
+                  </a>
+                  <a
+                    href={tomaSel.url}
+                    download={nombreToma}
+                    className={botonDestacado}
+                  >
+                    <Download className="h-5 w-5" />
+                    Original
+                  </a>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => procesarToma(tomaSel, nombreToma)}
+                    disabled={procesandoAlguna}
+                    className={botonDestacado}
+                  >
+                    <Upload className="h-5 w-5" />
+                    <span aria-live="polite" className="tabular-nums">
+                      {proceso?.estado === "subiendo"
+                        ? `Subiendo ${proceso.porcentaje} %`
+                        : proceso?.estado === "procesando"
+                          ? "Procesando…"
+                          : proceso?.estado === "error"
+                            ? "Reintentar"
+                            : "TikTok"}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (archivoCompartible) compartir(archivoCompartible);
+                    }}
+                    disabled={!archivoCompartible}
+                    className={botonDestacado}
+                  >
+                    <Share2 className="h-5 w-5" />
+                    Compartir
+                  </button>
+                  <a
+                    href={tomaSel.url}
+                    download={nombreToma}
+                    className={botonDestacado}
+                  >
+                    <Download className="h-5 w-5" />
                     Descargar
                   </a>
-                </div>
-              </>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  onClick={() => procesarToma(tomaSel, nombreToma)}
-                  disabled={procesandoAlguna}
-                  className={`${botonCtrl} disabled:opacity-50`}
-                >
-                  <Upload className="h-4 w-4" />
-                  {proceso?.estado === "error"
-                    ? "Reintentar"
-                    : "Procesar para TikTok"}
-                </button>
-                <p role="status" className="text-center text-xs text-white/80">
-                  {proceso?.estado === "subiendo" &&
-                    `Subiendo… ${proceso.porcentaje} %`}
-                  {proceso?.estado === "procesando" &&
-                    "Procesando en el servidor…"}
-                  {!proceso &&
-                    procesandoAlguna &&
-                    "Hay otra toma en proceso."}
-                </p>
-                {proceso?.estado === "error" && (
-                  <p
-                    role="alert"
-                    className="rounded-lg bg-amber-500/90 px-3 py-1.5 text-center text-xs font-medium text-black"
-                  >
-                    {proceso.mensaje}
-                  </p>
-                )}
-              </>
+                </>
+              )}
+
+              {/* Fila 2 */}
+              <button
+                type="button"
+                onClick={() => regrabar("gancho")}
+                disabled={tomasLlenas}
+                className={botonSecundario}
+              >
+                <RotateCcw className="h-5 w-5" />
+                Regrabar gancho
+              </button>
+              <button
+                type="button"
+                onClick={() => regrabar("completa")}
+                disabled={tomasLlenas}
+                className={botonSecundario}
+              >
+                <RotateCcw className="h-5 w-5" />
+                Grabar de nuevo
+              </button>
+              <button
+                type="button"
+                onClick={() => descartarToma(tomaSel.id)}
+                className={botonSecundario}
+              >
+                <Trash2 className="h-5 w-5" />
+                Descartar
+              </button>
+            </div>
+
+            {/* Estado y errores, bajo la grilla. */}
+            {proceso?.estado === "error" && (
+              <p role="alert" className="text-center text-[11px] text-amber-400">
+                {proceso.mensaje}
+              </p>
+            )}
+            {!proceso && procesandoAlguna && (
+              <p role="status" className="text-center text-[11px] text-white/80">
+                Hay otra toma en proceso.
+              </p>
+            )}
+            {aviso && (
+              <p role="alert" className="text-center text-[11px] text-amber-400">
+                {aviso}
+              </p>
+            )}
+            {tomasLlenas && (
+              <p className="text-center text-[11px] text-white/70">
+                Máximo {MAX_TOMAS} tomas en memoria: descarta una para grabar otra.
+              </p>
             )}
           </div>
-
-          {tomasLlenas && (
-            <p className="text-center text-xs text-white/70">
-              Máximo {MAX_TOMAS} tomas en memoria: descarta una para grabar otra.
-            </p>
-          )}
         </div>
       ) : (
         <div className="relative flex h-full w-full min-w-0 touch-none items-center justify-center">
