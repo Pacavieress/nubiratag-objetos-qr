@@ -15,6 +15,7 @@ import {
   Square,
   Trash2,
   Type,
+  Upload,
   X,
 } from "lucide-react";
 import { useInmersivo } from "../../inmersivo";
@@ -76,6 +77,40 @@ const MENSAJE_FALLO_VERTICAL =
 const TIMEOUT_PERMISO_MS = 10000;
 const MENSAJE_TIMEOUT_PERMISO =
   "El navegador no respondió a la solicitud. Revisa el permiso del sitio en la configuración del navegador o ábrelo en Chrome o Safari.";
+
+// Procesamiento en el servidor (app/api/grabacion/procesar). El tamaño
+// máximo debe coincidir con el de la ruta.
+const URL_PROCESAR = "/api/grabacion/procesar";
+const MAX_BYTES_PROCESAR = 300 * 1024 * 1024;
+const TIMEOUT_PROCESAR_MS = 12 * 60 * 1000; // subida + proceso + descarga
+
+// Versión para TikTok de una toma.
+type Proceso =
+  | { estado: "subiendo"; porcentaje: number }
+  | { estado: "procesando" }
+  | { estado: "listo"; blob: Blob; url: string; nombre: string }
+  | { estado: "error"; mensaje: string };
+
+function mensajeErrorProceso(status: number): string {
+  switch (status) {
+    case 401:
+      return "Tu sesión expiró. Inicia sesión en otra pestaña y reintenta.";
+    case 403:
+      return "Tu usuario no tiene permiso para procesar videos.";
+    case 413:
+      return "El servidor rechazó el video por tamaño (máximo 300 MB).";
+    case 415:
+      return "El servidor no admite el formato de esta toma.";
+    case 429:
+      return "Ya se está procesando otro video. Espera un momento y reintenta.";
+    case 504:
+      return "El procesamiento tardó demasiado y se canceló. Reintenta.";
+    case 0:
+      return "Falló la conexión. Revisa la red y reintenta.";
+    default:
+      return `El servidor no pudo procesar el video (error ${status}).`;
+  }
+}
 
 type Dispositivo = { id: string; label: string };
 type Fase = "preparar" | "grabar";
@@ -815,6 +850,8 @@ export function Teleprompter() {
   const [bloqueActivo, setBloqueActivo] = useState(0);
   const [tomas, setTomas] = useState<Toma[]>([]);
   const [tomaId, setTomaId] = useState<number | null>(null);
+  // Versión procesada de cada toma (id → estado).
+  const [procesos, setProcesos] = useState<Record<number, Proceso>>({});
   const [enResultado, setEnResultado] = useState(false);
 
   // Número de la adquisición de cámara vigente: cambiarlo invalida la que
@@ -861,6 +898,9 @@ export function Teleprompter() {
   const conteoTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Detiene la medición de ruido de la cuenta regresiva.
   const detenerMuestreoRef = useRef<(() => void) | null>(null);
+  // Por id de toma: subida en curso y blob URL de la versión procesada.
+  const subidasRef = useRef(new Map<number, XMLHttpRequest>());
+  const urlsProcesadasRef = useRef(new Map<number, string>());
 
   const bloques = useMemo(() => dividirBloques(guion), [guion]);
   // En "Regrabar gancho" solo se muestra y graba el primer bloque.
@@ -1470,7 +1510,12 @@ export function Teleprompter() {
   }, [grabando, interrumpir]);
 
   // Aviso del navegador antes de recargar o cerrar con material sin guardar.
-  const hayPendiente = tomas.length > 0 || grabando || finalizando;
+  // El servidor procesa un video a la vez.
+  const procesandoAlguna = Object.values(procesos).some(
+    (p) => p.estado === "subiendo" || p.estado === "procesando"
+  );
+  const hayPendiente =
+    tomas.length > 0 || grabando || finalizando || procesandoAlguna;
   useEffect(() => {
     if (!hayPendiente) return;
     const avisar = (e: BeforeUnloadEvent) => {
@@ -1884,8 +1929,84 @@ export function Teleprompter() {
     void s.principal.fin.then((a) => URL.revokeObjectURL(a.url));
   }, []);
 
+  // Cancela la subida y revoca la versión procesada de una toma.
+  const liberarProceso = useCallback((id: number) => {
+    subidasRef.current.get(id)?.abort();
+    subidasRef.current.delete(id);
+    const url = urlsProcesadasRef.current.get(id);
+    if (url) URL.revokeObjectURL(url);
+    urlsProcesadasRef.current.delete(id);
+    setProcesos((prev) => {
+      const quedan = { ...prev };
+      delete quedan[id];
+      return quedan;
+    });
+  }, []);
+
   function liberarToma(t: Toma) {
+    liberarProceso(t.id);
     URL.revokeObjectURL(t.url);
+  }
+
+  // Sube la toma y guarda la versión que devuelve el servidor. XHR y no fetch
+  // porque informa el avance de la subida.
+  function procesarToma(toma: Toma, nombreOriginal: string) {
+    const { id } = toma;
+    if (subidasRef.current.size > 0) return;
+    // Un reintento parte de cero.
+    liberarProceso(id);
+    const guardar = (p: Proceso) =>
+      setProcesos((prev) => ({ ...prev, [id]: p }));
+    if (toma.blob.size > MAX_BYTES_PROCESAR) {
+      guardar({ estado: "error", mensaje: mensajeErrorProceso(413) });
+      return;
+    }
+
+    const xhr = new XMLHttpRequest();
+    const fallar = (mensaje: string) => {
+      subidasRef.current.delete(id);
+      guardar({ estado: "error", mensaje });
+    };
+    xhr.open(
+      "POST",
+      `${URL_PROCESAR}?nombre=${encodeURIComponent(nombreOriginal)}`
+    );
+    xhr.setRequestHeader("Content-Type", toma.mimeType.split(";")[0]);
+    xhr.responseType = "blob";
+    xhr.timeout = TIMEOUT_PROCESAR_MS;
+    xhr.upload.onprogress = (e) => {
+      if (!e.lengthComputable) return;
+      guardar({
+        estado: "subiendo",
+        porcentaje: Math.floor((e.loaded / e.total) * 100),
+      });
+    };
+    xhr.upload.onload = () => guardar({ estado: "procesando" });
+    xhr.onload = () => {
+      const respuesta = xhr.response as Blob | null;
+      if (xhr.status !== 200) {
+        fallar(mensajeErrorProceso(xhr.status));
+        return;
+      }
+      if (!respuesta?.size || !respuesta.type.startsWith("video/mp4")) {
+        fallar("El servidor no devolvió un video. Reintenta.");
+        return;
+      }
+      subidasRef.current.delete(id);
+      const url = URL.createObjectURL(respuesta);
+      urlsProcesadasRef.current.set(id, url);
+      guardar({
+        estado: "listo",
+        blob: respuesta,
+        url,
+        nombre: `${nombreOriginal.replace(/\.[^.]+$/, "")}_tiktok.mp4`,
+      });
+    };
+    xhr.onerror = () => fallar(mensajeErrorProceso(0));
+    xhr.ontimeout = () => fallar(mensajeErrorProceso(504));
+    subidasRef.current.set(id, xhr);
+    guardar({ estado: "subiendo", porcentaje: 0 });
+    xhr.send(toma.blob);
   }
 
   function limpiarEstadoGrabacion() {
@@ -1968,7 +2089,7 @@ export function Teleprompter() {
   function compartir(archivo: File) {
     navigator.share({ files: [archivo] }).catch((err: unknown) => {
       if (err instanceof DOMException && err.name === "AbortError") return;
-      setAviso("No se pudo compartir; usa Descargar toma.");
+      setAviso("No se pudo compartir; usa el botón de descarga.");
     });
   }
 
@@ -1992,7 +2113,13 @@ export function Teleprompter() {
   // Liberar todo al salir de la pantalla.
   useEffect(() => {
     montadoRef.current = true;
+    const subidas = subidasRef.current;
+    const urlsProcesadas = urlsProcesadasRef.current;
     return () => {
+      subidas.forEach((xhr) => xhr.abort());
+      subidas.clear();
+      urlsProcesadas.forEach((url) => URL.revokeObjectURL(url));
+      urlsProcesadas.clear();
       montadoRef.current = false;
       if (conteoTimerRef.current) clearInterval(conteoTimerRef.current);
       conteoTimerRef.current = null;
@@ -2399,6 +2526,19 @@ export function Teleprompter() {
     });
     if (navigator.canShare({ files: [file] })) archivoCompartible = file;
   }
+  // Lo mismo para la versión procesada de la toma seleccionada.
+  const proceso = tomaSel ? procesos[tomaSel.id] : undefined;
+  let procesadoCompartible: File | null = null;
+  if (
+    enResultado &&
+    proceso?.estado === "listo" &&
+    typeof navigator.canShare === "function"
+  ) {
+    const file = new File([proceso.blob], proceso.nombre, {
+      type: "video/mp4",
+    });
+    if (navigator.canShare({ files: [file] })) procesadoCompartible = file;
+  }
   const botonPrimario =
     "flex h-11 items-center gap-2 rounded-xl bg-[#54A6D8] px-5 text-sm font-semibold text-white hover:bg-[#4394c4]";
 
@@ -2535,6 +2675,68 @@ export function Teleprompter() {
               Cerrar
             </button>
           </div>
+          {/* Versión para TikTok, procesada en el servidor. */}
+          <div className="flex w-full max-w-md flex-col items-center gap-2 border-t border-white/15 pt-3">
+            {proceso?.estado === "listo" ? (
+              <>
+                <p className="max-w-full break-all text-center text-xs text-white/70">
+                  Versión para TikTok lista: {proceso.nombre}
+                </p>
+                <div className="flex flex-wrap justify-center gap-3">
+                  {procesadoCompartible && (
+                    <button
+                      type="button"
+                      onClick={() => compartir(procesadoCompartible)}
+                      className={botonPrimario}
+                    >
+                      <Share2 className="h-4 w-4" />
+                      Compartir / Guardar
+                    </button>
+                  )}
+                  <a
+                    href={proceso.url}
+                    download={proceso.nombre}
+                    className={botonPrimario}
+                  >
+                    <Download className="h-4 w-4" />
+                    Descargar
+                  </a>
+                </div>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => procesarToma(tomaSel, nombreToma)}
+                  disabled={procesandoAlguna}
+                  className={`${botonCtrl} disabled:opacity-50`}
+                >
+                  <Upload className="h-4 w-4" />
+                  {proceso?.estado === "error"
+                    ? "Reintentar"
+                    : "Procesar para TikTok"}
+                </button>
+                <p role="status" className="text-center text-xs text-white/80">
+                  {proceso?.estado === "subiendo" &&
+                    `Subiendo… ${proceso.porcentaje} %`}
+                  {proceso?.estado === "procesando" &&
+                    "Procesando en el servidor…"}
+                  {!proceso &&
+                    procesandoAlguna &&
+                    "Hay otra toma en proceso."}
+                </p>
+                {proceso?.estado === "error" && (
+                  <p
+                    role="alert"
+                    className="rounded-lg bg-amber-500/90 px-3 py-1.5 text-center text-xs font-medium text-black"
+                  >
+                    {proceso.mensaje}
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+
           {tomasLlenas && (
             <p className="text-center text-xs text-white/70">
               Máximo {MAX_TOMAS} tomas en memoria: descarta una para grabar otra.
